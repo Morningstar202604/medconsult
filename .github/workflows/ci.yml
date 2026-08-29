@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  checks:
+  check:
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -16,11 +16,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Syntax check (stdlib-only core)
+      - name: Syntax check (compile)
         run: python -m compileall app server.py
-      - name: Import core modules (no heavy deps)
-        run: |
-          python -c "import ast, pathlib
-          for p in pathlib.Path('app').glob('*.py'):
-              ast.parse(p.read_text(encoding='utf-8'))
-          print('AST OK')"
