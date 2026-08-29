@@ -1,0 +1,14 @@
+__pycache__/*
+results/*
+*_results*.py
+*.out
+
+
+# 汇诊平台
+__pycache__/
+.venv/
+shot_*.png
+
+# 服务端默认配置与用户文档库
+config.json
+library/

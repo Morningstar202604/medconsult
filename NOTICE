@@ -1,0 +1,15 @@
+# NOTICE
+
+This project is built on top of [AgentClinic](https://github.com/samuelschmidgall/AgentClinic)
+(MIT License, © 2024 Samuel Schmidgall), which provides the upstream research
+baseline: the clinical scenario data format (MedQA / NEJM case files), the
+original patient–doctor–measurement agent protocol, and the benchmark CLI
+(`agentclinic.py`).
+
+MedConsult extends that baseline into a production-oriented, local-first
+medical multi-agent consultation platform: web workspaces, a persistent local
+document library with RAG retrieval, medical calculator tools, session memory,
+a prompt pool, and multi-provider LLM bridging.
+
+All upstream code remains under the MIT License. See `LICENSE` for the full
+license text covering both copyright holders.

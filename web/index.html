@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>汇诊 MedConsult · 医疗多智能体会诊平台</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<!-- ======== 启动过渡页 ======== -->
+<div id="splash">
+  <div class="splash-inner">
+    <div class="splash-logo">汇</div>
+    <h1 class="splash-title">汇诊 MedConsult</h1>
+    <p class="splash-slogan">多智能体 · 多学科 · 一键会诊</p>
+    <p class="splash-sub">请选择您要进入的工作台</p>
+    <div class="splash-cards">
+      <div class="splash-card" data-mode="mdt">
+        <div class="sc-icon">👥</div>
+        <h3>会诊工作台</h3>
+        <p>患者提交病情，多专科 AI 专家团独立发言、交叉讨论，输出结构化诊疗建议报告。面向患者服务与基层转诊会诊。</p>
+        <span class="sc-go">进入 →</span>
+      </div>
+      <div class="splash-card" data-mode="human">
+        <div class="sc-icon">🧑‍⚕️</div>
+        <h3>问诊训练台</h3>
+        <p>与 AI 患者真实对话练习问诊，支持开检查单与提交诊断，主持人自动判分反馈。面向医学生教学与医生培训。</p>
+        <span class="sc-go">进入 →</span>
+      </div>
+      <div class="splash-card" data-mode="auto">
+        <div class="sc-icon">🤖</div>
+        <h3>演示观摩台</h3>
+        <p>自动完整演示一场标准 AI 会诊全流程（问诊→检查→诊断→判分）。面向产品展示、课堂示范与销售演示。</p>
+        <span class="sc-go">进入 →</span>
+      </div>
+    </div>
+    <p class="splash-foot">本地部署 · 数据与文档不出本机 · 输出仅供参考，不构成医疗建议</p>
+  </div>
+</div>
+
+<div class="layout">
+
+  <!-- ======== 侧栏 ======== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="logo">汇</div>
+      <div class="brand-text">
+        <h1>汇诊 MedConsult</h1>
+        <p>医疗多智能体会诊平台</p>
+      </div>
+    </div>
+
+    <div class="mode-switch">
+      <button id="modeMdt" class="mode-btn active">
+        <span class="mode-icon">👥</span>
+        <span class="mode-text"><span class="mode-name">会诊工作台</span><span class="mode-desc">提交病情 → 多专科讨论出方案</span></span>
+      </button>
+      <button id="modeHuman" class="mode-btn">
+        <span class="mode-icon">🧑‍⚕️</span>
+        <span class="mode-text"><span class="mode-name">问诊训练台</span><span class="mode-desc">与 AI 患者对话练习问诊</span></span>
+      </button>
+      <button id="modeAuto" class="mode-btn">
+        <span class="mode-icon">🤖</span>
+        <span class="mode-text"><span class="mode-name">演示观摩台</span><span class="mode-desc">自动演示标准会诊流程</span></span>
+      </button>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">📁 我的文档库 <span id="docCount" class="count"></span></div>
+      <div class="doc-actions">
+        <button id="btnUpload" class="mini-btn">＋ 上传文档</button>
+        <button id="btnPasteText" class="mini-btn">📝 粘贴文本</button>
+      </div>
+      <input type="file" id="fileInput" multiple hidden accept=".txt,.md,.pdf,.docx,.json,.csv,.log">
+      <div id="docList" class="doc-list"></div>
+    </div>
+
+    <div class="sec sec-cases">
+      <div class="sec-title">🧪 内置研究病例库（示例） <span id="caseCount" class="count"></span></div>
+      <input id="caseSearch" class="case-search" placeholder="🔍 搜索患者 / 症状关键词…">
+      <div id="datasetTabs" class="dataset-tabs"></div>
+      <div id="caseList" class="case-list"></div>
+    </div>
+
+    <div class="sec">
+      <div class="sec-title">🕘 会诊记录 <span id="sessCount" class="count"></span>
+        <button id="btnSessClear" class="sess-clear" title="清空全部记录">清空</button></div>
+      <div id="sessList" class="sess-list"></div>
+    </div>
+
+    <div class="sidebar-bottom">
+      <button id="btnSettings" class="settings-btn">⚙️ 平台设置 <span class="settings-sub">模型 / 参数 / 偏差</span></button>
+      <div class="foot">本地部署 · 文档与配置仅存本机 · 基于 AgentClinic (MIT)</div>
+    </div>
+  </aside>
+
+  <!-- ======== 主区域 ======== -->
+  <main class="main">
+    <header class="topbar">
+      <div class="case-head">
+        <div id="caseTitle" class="case-title">未选择患者</div>
+        <div id="caseObjective" class="case-obj"></div>
+      </div>
+      <div class="controls">
+        <span id="runBadge" class="run-badge mock">模拟演示</span>
+        <span id="progress" class="progress"></span>
+        <button id="btnStop" class="btn ghost" style="display:none">■ 停止</button>
+        <button id="btnStart" class="btn primary" disabled>▶ 开始会诊</button>
+        <button id="btnReset" class="btn ghost" disabled>↺ 重置</button>
+      </div>
+    </header>
+
+    <div class="chat-scroll">
+      <section id="chat" class="chat">
+        <div class="empty-hint" id="emptyHint">
+          <div class="empty-icon">🫶</div>
+          <h2>AI 专家团，为您会诊</h2>
+          <p>描述您的症状，AI 专家团将进行多学科会诊，给出结构化的诊疗建议报告。<br>
+          <span class="dim">点击下方「填写问诊单」开始；平台输出仅供健康参考，不构成医疗建议。</span></p>
+          <div class="starters">
+            <button class="starter" data-act="intake">🫶 填写问诊单开始会诊</button>
+            <button class="starter" data-act="auto">🤖 观摩一场 AI 会诊</button>
+            <button class="starter" data-act="cfg">⚙️ 配置真实大模型</button>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <footer class="composer-wrap">
+      <div class="composer">
+        <div class="protocol-tips" id="protocolTips">
+          <span class="role-toggle" id="mdtRoleToggle" style="display:none">
+            <button type="button" data-role="patient" class="on">🙋 我是患者</button>
+            <button type="button" data-role="doctor">🩺 我是医生</button>
+          </span>
+          <button class="tip" data-fill="REQUEST TEST: ">🧪 开检查 REQUEST TEST</button>
+          <button class="tip" data-fill="DIAGNOSIS READY: ">🩺 提交诊断 DIAGNOSIS READY</button>
+          <button class="tip" id="tipFillCase" style="display:none">📋 从病例库填入示例病情</button>
+          <button class="tip" id="tipIntake" style="display:none">🫶 填写问诊单（推荐）</button>
+          <button class="tip" id="tipSkip" style="display:none">⏭ 跳过追问，直接会诊</button>
+        </div>
+        <div class="input-row">
+          <textarea id="humanInput" rows="1" placeholder="以医生身份向患者提问…（Enter 发送）" disabled></textarea>
+          <button id="btnSend" class="send-btn" disabled title="发送">➤</button>
+        </div>
+        <div class="composer-note" id="composerNote">观摩模式下无需输入；切换到「问诊模式」后由你主诊。</div>
+      </div>
+    </footer>
+
+    <!-- ======== 问诊单弹窗 ======== -->
+    <div id="intakeModal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>🫶 结构化问诊单</h2>
+          <button class="modal-x" id="btnCloseIntake">✕</button>
+        </div>
+        <div class="modal-body">
+          <div class="set-row-2">
+            <label class="fld"><span>年龄</span><input id="inAge" class="inp" placeholder="如：35"></label>
+            <label class="fld"><span>性别</span>
+              <select id="inSex" class="inp"><option value="">未填</option><option>男</option><option>女</option></select>
+            </label>
+          </div>
+          <label class="fld"><span>主要症状 *</span><input id="inSymptom" class="inp" placeholder="如：头痛、发热、咳嗽、腹痛…"></label>
+          <label class="fld"><span>症状持续多久</span><input id="inDuration" class="inp" placeholder="如：3 天 / 2 周 / 1 个月"></label>
+          <label class="fld"><span>加重或缓解因素</span><input id="inFactor" class="inp" placeholder="如：活动后加重、休息后缓解、夜间明显"></label>
+          <label class="fld"><span>既往病史</span><input id="inHistory" class="inp" placeholder="如：高血压 5 年；没有可留空"></label>
+          <label class="fld"><span>当前用药 / 过敏史</span><input id="inMeds" class="inp" placeholder="如：服用降压药；青霉素过敏"></label>
+        </div>
+        <div class="modal-foot">
+          <span class="hint">填得越全，会诊越准；不想填的项目留空即可。</span>
+          <button id="btnGenIntake" class="btn primary">生成病情描述</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ======== 设置弹窗 ======== -->
+    <div id="settingsModal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-head">
+          <h2>⚙️ 平台设置</h2>
+          <button class="modal-x" id="btnCloseSettings">✕</button>
+        </div>
+
+        <div class="modal-body">
+          <div class="set-group">
+            <div class="set-title">运行方式</div>
+            <div class="set-row">
+              <select id="runMode" class="inp">
+                <option value="mock">模拟演示（脚本对话，无需 API）</option>
+                <option value="llm">真实大模型（OpenAI 兼容接口）</option>
+              </select>
+            </div>
+            <div class="llm-only">
+              <div class="set-row-2">
+                <label class="fld"><span>Base URL <i>可留空=官方</i></span>
+                  <input id="llmBase" class="inp" placeholder="https://api.deepseek.com/v1">
+                </label>
+                <label class="fld"><span>API Key</span>
+                  <input id="llmKey" class="inp" type="password" placeholder="sk-…（仅本次会话内存中使用）">
+                </label>
+              </div>
+              <div class="set-row">
+                <button id="btnTest" class="btn ghost small">🔌 测试连接</button>
+                <span id="testResult" class="test-result"></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="set-group llm-only">
+            <div class="set-title">智能体模型 <span class="set-sub">四个智能体可各用不同模型（留空则使用下方默认模型）</span></div>
+            <label class="fld"><span>默认模型</span>
+              <input id="llmModel" class="inp" value="gpt-4o-mini" placeholder="gpt-4o-mini / deepseek-chat / qwen-plus …">
+            </label>
+            <div class="set-row-2">
+              <label class="fld"><span>🧑‍⚕️ 医生 Agent</span>
+                <input id="doctorModel" class="inp" placeholder="默认同上">
+              </label>
+              <label class="fld"><span>🧑 患者 Agent</span>
+                <input id="patientModel" class="inp" placeholder="默认同上">
+              </label>
+              <label class="fld"><span>🧪 检查科 Agent</span>
+                <input id="measurementModel" class="inp" placeholder="默认同上">
+              </label>
+              <label class="fld"><span>⚖️ 主持人 Agent（判分）</span>
+                <input id="moderatorModel" class="inp" placeholder="默认同上">
+              </label>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-title">会诊参数</div>
+            <div class="set-row-3">
+              <label class="fld"><span>医生最多提问轮数</span>
+                <input id="totalInfs" class="inp" type="number" min="3" max="30" value="10">
+              </label>
+              <label class="fld llm-only"><span>Temperature</span>
+                <input id="temperature" class="inp" type="number" step="0.05" min="0" max="2" value="0.05">
+              </label>
+              <label class="fld llm-only"><span>Max Tokens</span>
+                <input id="maxTokens" class="inp" type="number" min="50" max="4000" value="400">
+              </label>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-title">MDT 会诊参数</div>
+            <div class="set-row">
+              <div class="fld" style="width:100%"><span>专科团队预设</span>
+                <select id="teamPreset" class="inp">
+                  <option value="">自定义（使用下方勾选）</option>
+                  <option value="general">综合会诊团（内/外/药学/影像检验）</option>
+                  <option value="cardio">心血管会诊团（心内/内科/药学/影像检验）</option>
+                  <option value="neuro">神经会诊团（神内/影像检验/药学/内科）</option>
+                  <option value="resp">呼吸会诊团（内科/影像检验/药学/外科）</option>
+                  <option value="peds">儿科会诊团（儿科/内科/药学/影像检验）</option>
+                  <option value="obgyn">妇产会诊团（妇产/内科/药学/影像检验）</option>
+                </select>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="fld" style="width:100%"><span>参与专科（多选，可自行组合）</span>
+                <div id="specBoxes" class="spec-boxes"></div>
+              </div>
+            </div>
+            <div class="set-row-2">
+              <label class="fld"><span>讨论轮数</span>
+                <select id="mdtRounds" class="inp">
+                  <option value="1">1 轮（各专科独立意见）</option>
+                  <option value="2" selected>2 轮（含交叉讨论）</option>
+                </select>
+              </label>
+              <label class="fld"><span>专科发言风格</span>
+                <select id="specStyle" class="inp">
+                  <option value="brief">简洁版（约 250 字）</option>
+                  <option value="detailed">详细版（约 500 字，含依据/鉴别/处理/随访）</option>
+                  <option value="evidence">循证版（标注指南依据与推荐强度）</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-title">角色定义与提示词 <span class="set-sub">留空使用平台默认；可自定义每个智能体的系统提示词（企业可按科室规范定制）</span></div>
+            <div id="promptEditors"></div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-title">🧰 工具与执行（沙箱） <span class="set-sub">本地受控执行环境：数据不出本机，工具白名单与资源上限可配</span></div>
+            <div class="set-row tool-toggles">
+              <label class="fld tool-toggle"><input type="checkbox" id="toolDocSearch" checked><span>📄 文档检索工具<br><i>会诊自动检索文档库相关片段</i></span></label>
+              <label class="fld tool-toggle"><input type="checkbox" id="toolCalculator" checked><span>🧮 医学计算器工具<br><i>自动计算 MAP / BMI / 肌酐清除率</i></span></label>
+              <label class="fld tool-toggle"><input type="checkbox" id="saveSessions" checked><span>🕘 记忆：自动保存会诊<br><i>会诊记录持久化到本机</i></span></label>
+            </div>
+            <div class="set-row-2">
+              <label class="fld"><span>单次请求超时（秒）</span>
+                <input id="requestTimeout" class="inp" type="number" min="10" max="600" value="120">
+              </label>
+            </div>
+          </div>
+
+          <div class="set-group">
+            <div class="set-title">偏差注入 <span class="set-sub">研究认知偏差对会诊结论的影响（上游 AgentClinic 协议）</span></div>
+            <div class="set-row-2">
+              <label class="fld"><span>🧑‍⚕️ 医生偏差</span>
+                <select id="doctorBias" class="inp"><option value="">无</option></select>
+              </label>
+              <label class="fld"><span>🧑 患者偏差</span>
+                <select id="patientBias" class="inp"><option value="">无</option></select>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="modal-foot">
+          <span class="hint">设置保存在本机浏览器（localStorage），API Key 仅存本机、不上传服务器。</span>
+          <button id="btnSaveSettings" class="btn primary">完成</button>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>
