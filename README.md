@@ -2,18 +2,17 @@
 
 # 🏥 MedConsult · 汇诊
 
-**A local-first medical multi-agent consultation platform**
-Multi-specialist AI teams · Document-grounded RAG · Medical calculators · Session memory · Prompt pool
+**A local-first, hospital-oriented multi-agent MDT consultation platform**
+
+*Multi-specialist AI consultation · Clinical scoring tools · Lab reference library · Prompt layering & Skills · Closed-loop learning · Report printing & archiving*
 
 [English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
 
-`MIT License` `Python 3.10+` `No web framework` `Data stays on your machine`
+`MIT License` `Python 3.10+` `Zero web framework` `Data stays on your machine`
 
-**[🚀 Quick Start](#-quick-start)** · **[✨ Features](#-features)** · **[🖥 Workspaces](#-three-workspaces)** · **[🧰 Agent Capabilities](#-agent-capabilities)** · **[📄 Docs](#-documentation)**
+**MDT** · **Clinical Decision Support** · **Multi-Agent** · **RAG** · **EMR/HIS-friendly** · **DeepSeek / GLM / Qwen / OpenAI / Ollama**
 
-<img src="docs/images/splash.png" width="820" alt="MedConsult workspace launcher">
-
-*Launch screen — pick a workspace and start.*
+[🚀 Quick Start](#-quick-start) · [✨ Features](#-features) · [🧠 Agent Architecture](#-agent-architecture) · [🖼 Screenshots](#-screenshots) · [⚙️ Configuration](#%EF%B8%8F-configuration)
 
 </div>
 
@@ -21,28 +20,45 @@ Multi-specialist AI teams · Document-grounded RAG · Medical calculators · Ses
 
 ## ⚠️ Disclaimer
 
-> MedConsult is a **research and demonstration platform**. It is **NOT a medical device** and its output is **not medical advice**. Always consult qualified physicians. You are responsible for compliance with local healthcare regulations before any real-world use.
+> MedConsult is a **research and demonstration platform**. It is **NOT a medical device**; outputs are references for licensed physicians only, never medical advice or prescriptions. You are responsible for compliance with local healthcare regulations.
 
 ## ✨ Features
 
-- 🤖 **True multi-agent architecture** — patient, doctor, measurement, moderator and specialist agents collaborate through structured protocols to reach a referenced conclusion.
-- 👥 **MDT consultation workbench** — submit a condition (or a de-identified medical record) and watch specialist agents give independent opinions, cross-discuss, and converge on a structured reference report.
-- 📁 **Local document library** — upload real files (`txt / md / pdf / docx`) that stay on your disk; consultations can cite them as evidence.
-- 🔎 **RAG retrieval tool** — documents are chunk-indexed on ingest and automatically retrieved by relevance during consultations.
-- 🧮 **Medical calculator tools** — MAP, BMI and Cockcroft-Gault creatinine clearance are detected and computed deterministically, with results written into the report.
-- 🧠 **Session memory** — every consultation is auto-archived locally and can be replayed, deleted, or cleared.
-- 📝 **Prompt pool** — edit every agent's system prompt, save named presets per role, and switch instantly (great for hospital-specific prompt assets).
-- 🧰 **Configurable sandbox** — tool whitelist (retrieval / calculator / memory), per-request timeout, and a strict local-data boundary.
-- 🔌 **Any OpenAI-compatible LLM** — OpenAI, DeepSeek, GLM, Qwen, Ollama… with per-role model assignment and a one-click connection test.
-- 🖥 **Zero web framework** — the whole server is Python standard library; the frontend is dependency-free vanilla JS.
+**🏥 Built for real hospital workflows**
 
-## 🖥 Three Workspaces
+- 🚨 **Red-flag triage before anything else** — deterministic critical-sign scanning (ACS / stroke / dissection / hemorrhage / sepsis / acute abdomen…) warns in a banner *before* specialists speak, and flows into the report's emergency section.
+- 📊 **Data-completeness scoring** — 6 structured elements (age/sex, duration, history, medication, exams, vitals) with explicit "missing" hints; shown next to the report confidence so it is *explainable*, not vibes.
+- 🧮 **Deterministic medical calculators & scores** — MAP, BMI, Cockcroft-Gault CrCl, **CHA₂DS₂-VASc**, **Wells (DVT/PE)**, **CURB-65** — auto-detected from the case text, computed locally, auditable in the transcript.
+- 🧾 **Lab reference library (支持库)** — 32+ seeded lab items with ranges & clinical meaning; searchable in the sidebar, editable by the hospital, and **auto-injected into consultations** when the case mentions them.
+- 🖨 **Report printing & archiving** — every report prints with configurable hospital letterhead, timestamp and physician signature/date block; one-click export to standalone HTML for the medical record room.
+- 🔄 **Report follow-up (报告追问)** — after the report, the composer stays live: physicians question the moderator agent with the report + discussion as context. The most natural chart-review interaction.
+- 🧑‍🏫 **Consultation trainer** — practice interviewing an AI patient (`REQUEST TEST` / `DIAGNOSIS READY` protocol), moderator scoring; one-click **AI demo mode** for teaching & product demos.
 
-| Workspace | Audience | What happens |
-|---|---|---|
-| 👥 **Consultation Workbench** (default) | Patients & primary-care referral | Describe a condition → intake clarification → multi-specialist discussion → structured reference report |
-| 🧑‍⚕️ **Consultation Trainer** | Medical students & training | Interview an AI patient with the `REQUEST TEST` / `DIAGNOSIS READY` protocol; the moderator agent scores the final diagnosis |
-| 🤖 **Demo Stage** | Product demos & teaching | One click plays a complete standard consultation end-to-end |
+**🧠 Real agent engineering**
+
+- 🥞 **Layered prompt engineering** — `AI safety baseline → hospital policy (config) → consultation skills → role task`, applied to every MDT agent. Hospitals write their own drug-formulary / pathway rules in plain text.
+- 🧩 **Skills (技能包)** — reusable specialist instruction packs (seeded: 抗凝管理 / 胸痛鉴别 / 儿童用药 / 感染会诊). Select per consultation, grow your department library, manage in ⚙️ settings.
+- 📚 **Context engineering** — case summary + retrieved document chunks + lab references + past feedback are assembled per agent with budgets; round-2 debaters always see the case (yes, this was a real bug we fixed).
+- 🌱 **Closed-loop learning** — physicians mark reports 👍 helpful / 👎 needs-correction (with corrections); feedback persists locally and similar future consultations auto-inject "本院既往经验" as reference-only context.
+- 🤖 **True multi-agent MDT** — triage assistant → per-specialist independent opinions (concurrent) → cross-discussion → moderator consensus report; any OpenAI-compatible model per role.
+
+**🔒 Local-first & safe**
+
+- Everything (documents, sessions, prompts, feedback, config) stays on your machine. Only the LLM provider you configure is called.
+- Zero web framework: server is Python stdlib; frontend is dependency-free vanilla JS. `pip install -r requirements.txt` and go.
+- Upload whitelist, path-traversal hardening, body-size caps, port double-bind protection.
+
+## 🖼 Screenshots
+
+![MDT with triage banner & injected references](docs/images/mdt_triage_banner.png)
+*Consultation workbench: red-flag banner → summary with injected lab references & past hospital experience → specialist opinion → calculator → structured report (completeness 6/6, signature block, 👍/👎 feedback)*
+
+| | |
+|---|---|
+| ![Report details](docs/images/mdt_triage_report.png) | ![Workspace launcher](docs/images/splash.png) |
+| *Report card: confidence + data completeness, calculations, red flags, print/export* | *Launcher: 会诊工作台 / 问诊训练台* |
+| ![Settings](docs/images/settings.png) |
+| *⚙️ Settings: model per role, prompt pool, skills, hospital policy, biases, sandbox* |
 
 ## 🚀 Quick Start
 
@@ -53,107 +69,70 @@ cd medconsult
 python -m venv .venv
 # Windows
 .venv\Scripts\python -m pip install -r requirements.txt
+.venv\Scripts\python server.py
 # Linux / macOS
-.venv/bin/python -m pip install -r requirements.txt
-
-.venv/Scripts/python server.py      # Windows
-.venv/bin/python server.py          # Linux / macOS
+python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python server.py
 ```
 
-Open **http://127.0.0.1:8765** — done. Or double-click `start_web.bat` on Windows.
+Open **http://127.0.0.1:8765** — or double-click `start_web.bat` on Windows.
+Without any API key the platform runs in **scripted demo mode**; the built-in English research case library (MedQA / NEJM, 456 cases) works as training material.
 
 ### Configure an LLM (30 seconds)
 
 Option A — server-wide defaults in `config.json` (see `config.json.example`, gitignored):
 
 ```json
-{ "api_key": "sk-...", "base_url": "https://api.deepseek.com/v1", "model": "deepseek-chat" }
-```
-
-Option B — in-app: **⚙️ Settings → Runtime → Real LLM**, paste your key, hit **🔌 Test Connection**.
-Settings are stored in your browser's localStorage; keys never leave your machine.
-
-> Without any key the platform still runs in **scripted demo mode** (no API calls), and the built-in English research case library (MedQA / NEJM, 456 cases) works as training material.
-
-## 🧰 Agent Capabilities
-
-| Capability | Where to configure | Notes |
-|---|---|---|
-| Multi-role agents | Settings → Agent models | Per-role model, temperature, max tokens |
-| Prompt pool | Settings → Role prompts | Editable system prompts + named presets on disk |
-| Document retrieval (RAG) | Settings → Tools & Sandbox | Chunk index built on ingest, auto-retrieved per case |
-| Medical calculators | Settings → Tools & Sandbox | MAP / BMI / Cockcroft-Gault, deterministic & auditable |
-| Session memory | Sidebar → 🕘 Consultation records | Auto-archive, replay, delete, clear |
-| Bias injection | Settings → Bias | 13 cognitive biases for research (upstream AgentClinic protocol) |
-| Connection test | Settings → Runtime | One-click verify against any OpenAI-compatible endpoint |
-
-Everything runs locally: documents, sessions, prompts and keys never leave the machine — only the LLM provider you configure is called.
-
-## 📸 Screenshots
-
-| | |
-|---|---|
-| ![Intake](docs/images/intake.png) | ![Report](docs/images/report.png) |
-| *Structured intake form + pre-consultation clarification* | *Multi-discipline reference report* |
-| ![Library](docs/images/doclib.png) | ![Settings](docs/images/settings.png) |
-| *Local document library* | *Tools, sandbox and prompt pool settings* |
-
-## 📂 Repository Layout
-
-```
-├─ server.py               # stdlib HTTP server (port 8765)
-├─ app/
-│  ├─ engine.py            # consultation engine (auto / human modes)
-│  ├─ mdt.py               # MDT pipeline: summarize → retrieve → discuss → report
-│  ├─ rag.py               # chunk index + keyword retrieval (RAG tool)
-│  ├─ tools.py             # medical calculator tools
-│  ├─ library.py           # local document library (pdf/docx/txt…)
-│  ├─ sessions.py          # consultation memory
-│  ├─ prompts.py           # prompt pool storage
-│  ├─ llm.py               # OpenAI-compatible streaming bridge (0.28 SDK)
-│  ├─ cases.py             # built-in research case loaders
-│  └─ mockllm.py           # scripted agents for keyless demo mode
-├─ web/                    # dependency-free frontend (vanilla JS)
-├─ agentclinic.py          # upstream AgentClinic benchmark CLI (kept for research)
-├─ generate_cases/         # case generation tutorials (upstream)
-├─ tests/e2e_cdp.py        # headless-browser end-to-end test (CDP)
-└─ docs/                   # architecture notes & screenshots
-```
-
-## 📄 Documentation
-
-- [Architecture notes](docs/ARCHITECTURE.md)
-- [Configuration reference](config.json.example)
-- [Changelog](CHANGELOG.md)
-- [Upstream baseline](NOTICE)
-
-## 🗺 Roadmap
-
-- [ ] Streaming (typewriter) output
-- [ ] Multi-session tabs with live follow-up questions
-- [ ] Dark theme
-- [ ] FHIR/HIS connectors for hospital deployments
-
-## ⭐ Support the project
-
-If MedConsult helps you — a medical student, a builder, or a hospital team —
-please **give it a star ⭐**. Stars are how open-source medical tooling gets discovered.
-
-## 📜 License & Acknowledgments
-
-[MIT](LICENSE) © 2026 MedConsult Contributors · Built on [AgentClinic](https://github.com/samuelschmidgall/AgentClinic) (MIT) by Samuel Schmidgall — see [NOTICE](NOTICE).
-
-Built-in research cases come from the MedQA / NEJM-derived datasets shipped with AgentClinic and remain for research use.
-
-## 📚 Citation
-
-```bibtex
-@misc{medconsult2026,
-  title  = {MedConsult: A Local-First Medical Multi-Agent Consultation Platform},
-  author = {MedConsult Contributors},
-  year   = {2026},
-  url    = {https://github.com/Morningstar202604/medconsult}
+{
+  "api_key": "sk-...",
+  "base_url": "https://api.deepseek.com/v1",
+  "model": "deepseek-chat",
+  "hospital_name": "XX医院",
+  "hospital_policy": "本院规范：抗凝药物仅限目录内品种；出院带药不超过14天。"
 }
 ```
 
-<div align="center"><sub>Made for people who believe AI should help clinicians, not replace them.</sub></div>
+Works with **OpenAI / DeepSeek / GLM (open.bigmodel.cn/api/paas/v4) / Qwen / Ollama** — any OpenAI-compatible endpoint, including local models.
+Option B — in-app: **⚙️ Settings → 真实大模型**, paste your key, 🔌 Test Connection. Keys live in your browser's localStorage; they never leave the machine.
+
+## 🧠 Agent Architecture
+
+```
+┌────────────────────────────────────────────────────────┐
+│ Prompt layering (every MDT agent)                      │
+│  1. AI safety baseline   — no fabrication, physician-  │
+│     in-command, reference-only output                  │
+│  2. Hospital policy      — your formulary / pathway    │
+│  3. Consultation skills  — anticoag / chest-pain /     │
+│     peds-dosing / infection (editable library)         │
+│  4. Role task            — specialist / moderator      │
+├────────────────────────────────────────────────────────┤
+│ Context assembly per agent:                            │
+│  case summary · RAG chunks · lab references ·          │
+│  past feedback (similar cases) · calculator results    │
+├────────────────────────────────────────────────────────┤
+│ Pipeline: triage → summary → specialist opinions ×N    │
+│  (concurrent) → cross discussion → consensus report →  │
+│  physician follow-up Q&A → feedback → experience base  │
+└────────────────────────────────────────────────────────┘
+```
+
+## ⚙️ Configuration
+
+| Key | Purpose |
+|---|---|
+| `api_key` / `base_url` / `model` | LLM endpoint (OpenAI-compatible, incl. Ollama) |
+| `hospital_name` | Letterhead on printed reports |
+| `hospital_policy` | Hospital-specific rules injected into every agent |
+| `report_footer` | Footer note on printed reports |
+
+Env overrides: `MEDCONSULT_API_KEY` / `MEDCONSULT_BASE_URL` / `MEDCONSULT_MODEL` / `MEDCONSULT_HOST` / `MEDCONSULT_PORT`.
+
+## 📚 Documentation
+
+- [简体中文说明](README.zh-CN.md) · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md)
+- Upstream research baseline: [AgentClinic](https://github.com/SamuelSchmidgall/AgentClinic) (MIT) — the trainer/verdict protocol mirrors its benchmark.
+
+## License
+
+MIT © MedConsult Contributors. Medical disclaimer above applies.

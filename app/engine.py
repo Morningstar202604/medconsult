@@ -29,6 +29,21 @@ def _history_text(history):
     return "\n".join(out)
 
 
+def _num(v, default, cast=float, lo=None, hi=None):
+    """容错解析数值设置：坏值回退默认，并夹在合理区间。"""
+    try:
+        n = cast(v)
+    except (TypeError, ValueError):
+        return default
+    if n != n:  # NaN
+        return default
+    if lo is not None:
+        n = max(lo, n)
+    if hi is not None:
+        n = min(hi, n)
+    return n
+
+
 def _llm_cfg(settings):
     """Normalize LLM settings from the request body (None in mock mode).
 
@@ -57,9 +72,9 @@ def _llm_cfg(settings):
         "base_url": base_url,
         "doctor_bias": s.get("doctor_bias") or None,
         "patient_bias": s.get("patient_bias") or None,
-        "temperature": float(s.get("temperature") or 0.05),
-        "max_tokens": int(s.get("max_tokens") or 400),
-        "timeout": float(s.get("request_timeout") or 120),
+        "temperature": _num(s.get("temperature"), 0.05, float, 0, 2),
+        "max_tokens": int(_num(s.get("max_tokens"), 400, float, 50, 8000)),
+        "timeout": _num(s.get("request_timeout"), 120, float, 10, 900),
     }
 
 
@@ -76,11 +91,19 @@ def _real_reply(cfg, role, system_prompt, user_prompt):
 # auto mode (AI doctor): one step from the current history
 # ---------------------------------------------------------------------------
 
+def _fallback_notice(settings):
+    """选了真实模型但无可用 Key 时，明确告知已回退脚本模式（避免静默降级）。"""
+    if (settings or {}).get("mode") == "llm" and _llm_cfg(settings) is None:
+        return "未配置可用 API Key，本次已回退到模拟演示模式（可在⚙️设置或服务端 config.json 配置）"
+    return None
+
+
 def auto_step(dataset, case_id, history, settings=None):
     case = cases_mod.get_case(dataset, case_id)
     cfg = _llm_cfg(settings)
     total_infs = int((settings or {}).get("total_inferences") or 10)
     history = list(history or [])
+    notice = _fallback_notice(settings)
 
     if len(history) >= MAX_STEPS:
         return {"type": "done"}
@@ -90,7 +113,10 @@ def auto_step(dataset, case_id, history, settings=None):
 
     if not history:
         text = mock_doctor(case, cfg, 0, total_infs, history=history)
-        return {"type": "doctor", "role": "doctor", "text": text, "turn": 1, "total": total_infs}
+        ev = {"type": "doctor", "role": "doctor", "text": text, "turn": 1, "total": total_infs}
+        if notice:
+            ev["notice"] = notice
+        return ev
 
     last = history[-1]
 
@@ -120,7 +146,11 @@ def mock_doctor(case, cfg, turn, total_infs, force_final=False, history=None):
         last = (history or [{}])[-1]
         user = ("\nHere is a history of your dialogue: {hist}\n Here was the patient response: {last}\n"
                 "Now please continue your dialogue\nDoctor: ").format(hist=hist, last=last.get("text", ""))
-        return _real_reply(cfg, "doctor", system, user)
+        text = _real_reply(cfg, "doctor", system, user)
+        if force_final and "DIAGNOSIS READY" not in text:
+            # 弱模型超轮次仍不输出协议关键字：平台代为收尾，避免对话无限打转
+            text = text + "\nDIAGNOSIS READY: （医生未给出明确诊断）"
+        return text
     return mockllm.mock_doctor_reply(case, turn, force_final)
 
 

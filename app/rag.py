@@ -1,7 +1,8 @@
 """文档检索工具（RAG-lite）：入库时分块索引，按关键词评分检索。
 
 中文按二元组（bigram）+ 英文单词切词，规模在几千块以内足够快、可解释。
-索引持久化在 library/chunks.json，随文档增删动态更新。
+分词在入库时预计算存入索引（chunks.json），检索只做交集评分；
+索引文件带 mtime 缓存在进程内，避免每次请求重复读盘解析。
 """
 import json
 import os
@@ -15,19 +16,38 @@ _lock = threading.Lock()
 _CHUNK_SIZE = 400
 _CHUNK_OVERLAP = 60
 
+_cache = {"sig": None, "idx": []}
+
 
 def _load():
+    """读取索引（带 mtime 缓存）。"""
+    try:
+        st = os.stat(INDEX_PATH)
+        sig = (st.st_mtime, st.st_size)
+    except OSError:
+        return []
+    if _cache["sig"] == sig:
+        return _cache["idx"]
     try:
         with open(INDEX_PATH, "r", encoding="utf-8") as f:
-            return json.load(f)
+            idx = json.load(f)
     except Exception:
-        return []
+        idx = []
+    _cache["sig"] = sig
+    _cache["idx"] = idx
+    return idx
 
 
 def _save(idx):
     os.makedirs(os.path.dirname(INDEX_PATH), exist_ok=True)
     with open(INDEX_PATH, "w", encoding="utf-8") as f:
         json.dump(idx, f, ensure_ascii=False)
+    try:
+        st = os.stat(INDEX_PATH)
+        _cache["sig"] = (st.st_mtime, st.st_size)
+    except OSError:
+        _cache["sig"] = None
+    _cache["idx"] = idx
 
 
 def _tokens(text):
@@ -38,6 +58,13 @@ def _tokens(text):
         out.update(seg[i:i + 2] for i in range(len(seg) - 1))
         out.add(seg)
     return out
+
+
+def _chunk_tokens(c):
+    t = c.get("_tokens")
+    if t is None:
+        t = _tokens(c["text"])
+    return set(t)
 
 
 def _split(text):
@@ -55,7 +82,8 @@ def index_doc(name, text):
     with _lock:
         idx = [c for c in _load() if c["doc"] != name]
         for j, chunk in enumerate(_split(text)):
-            idx.append({"doc": name, "cid": j, "text": chunk})
+            idx.append({"doc": name, "cid": j, "text": chunk,
+                        "_tokens": sorted(_tokens(chunk))})  # 预存分词，检索免现算
         _save(idx)
 
 
@@ -77,10 +105,7 @@ def search(query, doc_names=None, k=5):
     qt = _tokens(query)
     scored = []
     for c in idx:
-        ct = c.get("_tokens")
-        if ct is None:
-            ct = _tokens(c["text"])
-        score = len(qt & ct)
+        score = len(qt & _chunk_tokens(c))
         if score:
             scored.append((score, c))
     scored.sort(key=lambda x: -x[0])

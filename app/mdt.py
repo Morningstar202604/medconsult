@@ -8,13 +8,46 @@ llm  模式：每个专科用真实模型独立推理，讨论轮看到彼此意
 """
 import json
 import re
+from concurrent.futures import ThreadPoolExecutor
 
 from . import cases as cases_mod
+from . import clinical
 from . import config as app_config
+from . import feedback as feedback_mod
 from . import library
 from . import llm
 from . import rag
+from . import reference as reference_mod
+from . import skills as skills_mod
 from . import tools as toolmod
+
+# ---------------------------------------------------------------------------
+# 提示词分层（上下文/提示词工程）：安全基线 > 医院规范 > 会诊技能 > 角色任务
+# ---------------------------------------------------------------------------
+
+SAFETY_LAYER = ("【AI会诊安全基线】你是医疗机构内的AI辅助会诊成员：只能基于提供的病历摘要、"
+                "参考资料与会诊记录作答，不得虚构检查结果、数值、病史或指南引用；"
+                "信息不足时明确指出需要补充什么；所有输出仅供执业医师参考，"
+                "不构成处方或最终诊断，临床决策由医师作出。")
+
+
+def _extra_layers(cfg):
+    """医院规范层 + 选中的会诊技能层。"""
+    parts = []
+    pol = app_config.hospital_policy()
+    if pol:
+        parts.append("【医院规范】" + pol)
+    for sid in (cfg or {}).get("skills") or []:
+        sk = skills_mod.get(sid)
+        if sk:
+            parts.append("【会诊技能:{}】{}".format(sk["name"], sk["prompt"]))
+    return "\n".join(parts)
+
+
+def agent_system(base, cfg):
+    """角色提示词 + 分层上下文（安全基线/医院规范/技能）。"""
+    extra = _extra_layers(cfg)
+    return base + "\n" + SAFETY_LAYER + (("\n" + extra) if extra else "")
 
 SPECIALTIES = {
     "internal":   {"name": "内科专家",     "emoji": "🫀"},
@@ -29,21 +62,36 @@ SPECIALTIES = {
 DEFAULT_SPECIALTIES = ["internal", "surgery", "pharmacy", "labimaging"]
 
 
+def _num(v, default, cast=float, lo=None, hi=None):
+    try:
+        n = cast(v)
+    except (TypeError, ValueError):
+        return default
+    if n != n:
+        return default
+    if lo is not None:
+        n = max(lo, n)
+    if hi is not None:
+        n = min(hi, n)
+    return n
+
+
 def _cfg(settings):
     s = settings or {}
     specs = s.get("mdt_specialties") or DEFAULT_SPECIALTIES
     specs = [k for k in specs if k in SPECIALTIES] or DEFAULT_SPECIALTIES
-    rounds = 2 if int(s.get("mdt_rounds") or 2) >= 2 else 1
+    rounds = 2 if int(_num(s.get("mdt_rounds"), 2, float, 1, 4)) >= 2 else 1
     base = {
         "specialties": specs,
         "rounds": rounds,
-        "temperature": float(s.get("temperature") or 0.3),
-        "max_tokens": int(s.get("max_tokens") or 700),
-        "timeout": float(s.get("request_timeout") or 120),
+        "temperature": _num(s.get("temperature"), 0.3, float, 0, 2),
+        "max_tokens": int(_num(s.get("max_tokens"), 700, float, 100, 8000)),
+        "timeout": _num(s.get("request_timeout"), 120, float, 10, 900),
         "moderator_prompt": (s.get("moderator_prompt") or "").strip() or None,
         "spec_style": s.get("spec_style") or "brief",
         "tool_doc_search": s.get("tool_doc_search") is not False,
         "tool_calculator": s.get("tool_calculator") is not False,
+        "skills": [str(x) for x in (s.get("skills") or []) if str(x).strip()],
     }
     d = app_config.llm_defaults()
     base["api_key"] = (s.get("api_key") or "").strip() or d.get("api_key")
@@ -175,7 +223,7 @@ def _llm_summary(cfg, text):
     try:
         return _chat(cfg, cfg["moderator_model"],
                      "请将以下病情描述整理为简洁的病历摘要（基本信息/主诉/现病史/既往史/辅助检查，缺项写'未见'），300字内：\n" + text,
-                     "你是会诊主持人助理，负责整理病历。")
+                     agent_system("你是会诊主持人助理，负责整理病历。", cfg))
     except Exception:
         return _summarize(text)
 
@@ -191,16 +239,20 @@ STYLE_REQUEST = {
 
 def _llm_opinion(cfg, spec_name, summary, round_no, others_text):
     style_req = STYLE_REQUEST.get(cfg.get("spec_style") or "brief", STYLE_REQUEST["brief"])
+    system = agent_system(
+        "你是会诊中的{}，发言专业、简洁、直接，不要复述任务，不要输出思考过程。"
+        "严格基于【病历摘要】与【参考资料】中给出的信息作答，"
+        "不得虚构资料中没有的检查结果、数值或病史。".format(spec_name), cfg)
     if round_no == 1:
         prompt = ("以下是一份病历摘要，请以{}身份参与多学科会诊(MDT)第一轮发言：{}"
                   "\n【病历摘要】\n{}").format(spec_name, style_req, summary)
     else:
-        prompt = ("多学科会诊第二轮讨论。其他专家第一轮意见如下：\n{}\n"
-                  "请以{}身份简要回应（同意/质疑谁、补充什么、最终倾向），180字内。").format(others_text, spec_name)
-    return _chat(cfg, cfg["moderator_model"], prompt,
-                 "你是会诊中的{}，发言专业、简洁、直接，不要复述任务，不要输出思考过程。"
-                 "严格基于【病历摘要】与【参考资料】中给出的信息作答，"
-                 "不得虚构资料中没有的检查结果、数值或病史。".format(spec_name))
+        # 上下文工程：二轮讨论也必须带病历摘要（否则专家在脱离病例的情况下空评）
+        prompt = ("多学科会诊第二轮讨论。请先回顾【病历摘要】，再回应其他专家意见。"
+                  "\n【病历摘要】\n{}\n\n其他专家第一轮意见如下：\n{}\n"
+                  "请以{}身份简要回应（同意/质疑谁、补充什么、最终倾向），180字内。").format(
+                      summary, others_text, spec_name)
+    return _chat(cfg, cfg["moderator_model"], prompt, system)
 
 
 def _parse_json_loose(text):
@@ -222,7 +274,8 @@ def _llm_report(cfg, summary, transcript_text):
               "要求：严格基于病历摘要与会诊记录中的信息，不得虚构资料中没有的检查结果、数值或病史。"
               "\n【病历摘要】\n{}\n【会诊记录】\n{}").format(summary, transcript_text[:6000])
     try:
-        raw = _chat(cfg, cfg["moderator_model"], prompt, "你是MDT主持人，只输出JSON。")
+        raw = _chat(cfg, cfg["moderator_model"], prompt,
+                    agent_system("你是MDT主持人，只输出JSON。", cfg))
         data = _parse_json_loose(raw)
         if data:
             data.setdefault("final_diagnosis", "见上")
@@ -260,13 +313,19 @@ def clarify(text, settings=None):
                         "以下是患者的病情描述。请提出 2-3 个最关键的补充问题（如病程、伴随症状、"
                         "既往史、用药过敏），帮助明确会诊所需信息。只输出 JSON 数组，每项一个问题，"
                         "每个问题不超过 30 字，中文。\n病情描述：" + text[:800],
-                        "你是医院预问诊助理，只输出 JSON 数组。")
+                        agent_system("你是医院预问诊助理，只输出 JSON 数组。", cfg))
             m = re.search(r"\[.*\]", raw, re.S)
             if m:
                 qs = json.loads(m.group(0))
-                qs = [str(q).strip() for q in qs if str(q).strip()][:3]
-                if qs:
-                    return qs
+                # 小模型常把问题包成 {'问题': ...} 字典，取其值；其余转字符串
+                fixed = []
+                for q in qs:
+                    if isinstance(q, dict) and q:
+                        q = next(iter(q.values()))
+                    if isinstance(q, str) and q.strip():
+                        fixed.append(q.strip())
+                if fixed:
+                    return fixed[:3]
         except Exception:
             pass
     qs = []
@@ -279,6 +338,40 @@ def clarify(text, settings=None):
     if not qs:
         qs.append("症状有没有加重或缓解的诱因（如进食、活动、夜间）？")
     return qs[:3]
+
+
+# ---------------------------------------------------------------------------
+# 报告追问：医生就已生成的会诊报告向主持人 Agent 追问（带完整上下文）
+# ---------------------------------------------------------------------------
+
+def followup(text, report, tail, settings=None):
+    """text: 医生追问; report: 报告对象; tail: 会诊记录尾部（摘要+关键发言）。"""
+    text = (text or "").strip()
+    if not text:
+        return {"error": "请输入追问内容"}
+    cfg = _cfg(settings)
+    context = []
+    if report:
+        try:
+            context.append("【会诊报告】" + json.dumps(report, ensure_ascii=False)[:2500])
+        except (TypeError, ValueError):
+            pass
+    for ev in (tail or [])[-6:]:
+        t = (ev.get("text") or "")[:400]
+        if t:
+            context.append("【{}】{}".format(ev.get("name") or ev.get("role"), t))
+    prompt = ("医生正在阅读你主持的会诊报告并提出追问，请基于以下会诊上下文作答。"
+              "只依据已有信息，需要补充检查/资料时明确说明。250字内，直接回答。\n\n"
+              + "\n\n".join(context) + "\n\n【医生追问】" + text)
+    if cfg["llm"]:
+        try:
+            reply = _chat(cfg, cfg["moderator_model"], prompt,
+                          agent_system("你是MDT会诊主持人，正在与阅读报告的临床医生对话，回答专业、克制。", cfg))
+            return {"reply": reply}
+        except Exception:
+            pass
+    return {"reply": "（当前为模拟演示模式，追问功能需要配置真实模型。报告结论请以书面报告为准；"
+                     "如需进一步讨论，请补充检查资料后重新发起会诊。）"}
 
 
 # ---------------------------------------------------------------------------
@@ -295,6 +388,16 @@ def consult(text, settings=None, dataset=None, case_id=None, doc_ids=None):
             case = None
 
     events = []
+    notice = None
+    if (settings or {}).get("mode") == "llm" and not cfg["llm"]:
+        notice = "未配置可用 API Key，本次会诊已回退到模拟演示模式（可在⚙️设置或服务端 config.json 配置）"
+
+    # 临床要素引擎：红旗危急征象 + 资料完备度（在专家发言前呈现，安全优先）
+    triage = clinical.assess(text)
+    if triage["red_flags"]:
+        events.append({"role": "triage", "name": "危急征象识别", "emoji": "🚨", "round": 0,
+                       "text": "；".join(triage["red_flags"]) + "。如目前仍在持续，请立即急诊就医，勿等待线上会诊。"})
+
     docs = library.get_texts_by_ids(doc_ids)
     ref_names = [d["name"] for d in docs]
     ref_text = ""
@@ -311,8 +414,21 @@ def consult(text, settings=None, dataset=None, case_id=None, doc_ids=None):
     if not ref_text and docs:
         ref_text = "\n\n【参考资料（用户文档库，会诊必须基于以下真实内容）】\n" + \
             "\n".join("《{}》\n{}".format(d["name"], d["content"]) for d in docs)
+    # 检验参考值支持库：按病情文本自动注入相关项目的参考范围
+    ref_block = reference_mod.inject_references(text)
+    if ref_block:
+        ref_text += "\n\n" + ref_block
+    # 本院经验库：注入既往相似病情的医生反馈（长期学习闭环）
+    exp = feedback_mod.similar(text, k=2)
+    if exp:
+        lines = []
+        for e in exp:
+            tag = "有帮助" if e.get("helpful") else "需修正"
+            note = ("；修正意见：" + e["note"]) if e.get("note") else ""
+            lines.append("·（{}，{}）{}{}".format(e["ts"], tag, e.get("diagnosis") or e.get("title"), note))
+        ref_text += "\n\n【本院既往会诊经验（医生反馈沉淀，仅供对照参考，非本例结论）】\n" + "\n".join(lines)
     if cfg["llm"]:
-        summary = _llm_summary(cfg, text + ref_text)
+        summary = _llm_summary(cfg, text)  # 摘要只整理用户描述；资料片段在下统一附加，避免重复
     else:
         summary = _summarize(text, case)
     if ref_text:
@@ -320,29 +436,43 @@ def consult(text, settings=None, dataset=None, case_id=None, doc_ids=None):
     events.append({"role": "summary", "name": "会诊助理", "emoji": "📋", "round": 0, "text": summary})
 
     specs = cfg["specialties"]
-    first_round = {}
-    for spec in specs:
+
+    def spec_opinion(spec, round_no, others_text):
+        """单个专科单轮意见；LLM 失败时回退到脚本意见，会诊不中断。"""
         meta = SPECIALTIES[spec]
         if cfg["llm"]:
-            opinion = _llm_opinion(cfg, meta["name"], summary, 1, "")
-        else:
-            opinion = _mock_opinion(spec, case, text, summary)
-        first_round[spec] = opinion
+            try:
+                return _llm_opinion(cfg, meta["name"], summary, round_no, others_text)
+            except Exception:  # noqa: BLE001 - 单个专家失败不拖垮整场会诊
+                pass
+        return (_mock_opinion(spec, case, text, summary) if round_no == 1
+                else _mock_response(spec, [SPECIALTIES[s]["name"] for s in specs if s != spec], case))
+
+    # 第一轮：各专科并发独立发言
+    with ThreadPoolExecutor(max_workers=min(8, len(specs))) as pool:
+        round1 = dict(zip(specs, pool.map(lambda s: spec_opinion(s, 1, ""), specs)))
+    first_round = round1
+    for spec in specs:
+        meta = SPECIALTIES[spec]
         events.append({"role": "specialist", "name": meta["name"], "emoji": meta["emoji"],
-                       "round": 1, "text": opinion})
+                       "round": 1, "text": round1[spec]})
 
     if cfg["rounds"] >= 2:
-        others_text = "\n".join("{}：{}".format(SPECIALTIES[s]["name"], first_round[s]) for s in specs)
+        # 第二轮：各专科看到彼此第一轮意见后并发交叉讨论
+        def round2_args(spec):
+            others_wo_self = "\n".join("{}：{}".format(SPECIALTIES[s]["name"], first_round[s])
+                                       for s in specs if s != spec)
+            return spec, others_wo_self
+
+        args = [round2_args(s) for s in specs]
+        with ThreadPoolExecutor(max_workers=min(8, len(args))) as pool:
+            futures = [(spec, pool.submit(spec_opinion, spec, 2, others))
+                       for spec, others in args]
+            replies = {spec: f.result() for spec, f in futures}
         for spec in specs:
             meta = SPECIALTIES[spec]
-            if cfg["llm"]:
-                others_wo_self = "\n".join("{}：{}".format(SPECIALTIES[s]["name"], first_round[s])
-                                           for s in specs if s != spec)
-                reply = _llm_opinion(cfg, meta["name"], summary, 2, others_wo_self)
-            else:
-                reply = _mock_response(spec, [SPECIALTIES[s]["name"] for s in specs if s != spec], case)
             events.append({"role": "specialist", "name": meta["name"], "emoji": meta["emoji"],
-                           "round": 2, "text": reply})
+                           "round": 2, "text": replies[spec]})
 
     if cfg["llm"]:
         transcript = "\n".join("{}（第{}轮）：{}".format(e["name"], e["round"], e["text"])
@@ -362,4 +492,12 @@ def consult(text, settings=None, dataset=None, case_id=None, doc_ids=None):
                            "text": "工具自动计算：" + line})
             report["calculations"] = ["{}（{}）= {}".format(c["name"], c["expr"], c["result"]) for c in calcs]
     events.append({"role": "report", "name": "主持人 Agent", "emoji": "⚖️", "round": 0, "report": report})
-    return {"events": events, "report": report}
+    report["data_completeness"] = "{}/{}".format(triage["completeness"]["score"], triage["completeness"]["total"])
+    if triage["completeness"]["missing"]:
+        report["missing_info"] = "缺：" + "、".join(triage["completeness"]["missing"])
+    if triage["red_flags"]:
+        report["red_flags"] = list(triage["red_flags"]) + list(report.get("red_flags") or [])
+    result = {"events": events, "report": report, "triage": triage}
+    if notice:
+        result["notice"] = notice
+    return result

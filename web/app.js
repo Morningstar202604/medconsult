@@ -15,6 +15,7 @@ const state = {
   mdtStage: "input",     // input -> clarify -> 会诊
   mdtRole: "patient",    // patient | doctor
   mdtText: "",
+  mdtTitle: "",          // 本次会诊标题（提交时捕获，存档用）
   docIds: new Set(),     // 会诊引用的文档
   savedApplied: false,
   transcript: [],        // 当前会话完整留痕（用于记忆存档与回放）
@@ -131,11 +132,20 @@ async function loadSessions() {
     const res = await fetch("/api/sessions");
     const data = await res.json();
     const list = $("sessList");
-    const sessions = data.sessions || [];
-    $("sessCount").textContent = sessions.length ? `(${sessions.length})` : "";
+    state.sessions = data.sessions || [];
+    renderSessions();
+  } catch (e) { /* 静默 */ }
+}
+
+function renderSessions() {
+  try {
+    const list = $("sessList");
+    const q = ($("sessSearch")?.value || "").trim().toLowerCase();
+    const sessions = (state.sessions || []).filter((s) => !q || (s.title || "").toLowerCase().includes(q));
+    $("sessCount").textContent = (state.sessions || []).length ? `(${state.sessions.length})` : "";
     list.innerHTML = "";
     if (!sessions.length) {
-      list.innerHTML = `<div class="doc-empty">暂无会诊记录。每场会诊结束后自动存档于此。</div>`;
+      list.innerHTML = `<div class="doc-empty">${q ? "无匹配记录" : "暂无会诊记录。每场会诊结束后自动存档于此。"}</div>`;
       return;
     }
     for (const s of sessions) {
@@ -166,8 +176,11 @@ async function replaySession(id) {
     $("emptyHint") && $("emptyHint").remove();
     $("chat").innerHTML = "";
     addSystem(`正在回放会诊记录：${s.title}（${s.ts}）· 只读回放，点「重置」返回`);
+    // 兼容历史存档：report 可能是 JSON 字符串
+    let rep = s.report;
+    if (typeof rep === "string") { try { rep = JSON.parse(rep); } catch (e) { rep = null; } }
     for (const it of (s.items || [])) {
-      if (it.role === "report" && s.report) { renderReport(s.report); continue; }
+      if (it.role === "report" && rep) { renderReport(rep, true); continue; }
       renderMdtEvent(it);
     }
   } catch (e) {
@@ -178,14 +191,15 @@ async function replaySession(id) {
 async function autoSaveSession() {
   if (!$("saveSessions").checked || !state.transcript.length) return;
   try {
+    const found = state.transcript.find(t => t.role === "report") || {};
     const base = state.caseId != null
       ? (document.getElementById("caseTitle")?.textContent || "病例会诊")
-      : ($("humanInput").value.trim().slice(0, 18) || "症状会诊");
+      : (state.mdtTitle || (state.mode === "human" ? "问诊训练" : "症状会诊"));
     await fetch("/api/sessions/save", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: state.mode, title: base,
                              items: state.transcript,
-                             report: (state.transcript.find(t => t.role === "report") || {}).text || null }),
+                             report: found.report || null }),
     });
     loadSessions();
   } catch (e) { /* 存档失败不打扰会诊 */ }
@@ -321,20 +335,115 @@ async function pasteTextDoc() {
 async function loadServerDefaults() {
   try {
     const d = await (await fetch("/api/defaults")).json();
+    // 端点/模型建议：无论是否已配 Key 都预填（用户只需粘贴 Key）
+    if (!state.savedApplied || !$("llmBase").value) {
+      if (d.base_url) $("llmBase").value = d.base_url;
+    }
+    if (!state.savedApplied || !$("llmModel").value || $("llmModel").value === "gpt-4o-mini") {
+      if (d.model) $("llmModel").value = d.model;
+    }
     if (d.has_key) {
       if (!state.savedApplied) {
-        $("runMode").value = "llm";
-        // HTML 里的占位默认值（gpt-4o-mini）要让位给服务端配置
-        if (d.base_url) $("llmBase").value = d.base_url;
-        if (d.model) $("llmModel").value = d.model;
-      } else {
-        if (!$("llmBase").value && d.base_url) $("llmBase").value = d.base_url;
-        if (!$("llmModel").value && d.model) $("llmModel").value = d.model;
+        $("runMode").value = "llm";   // 服务端已有可用 Key：默认即真实模型
       }
       $("llmKey").placeholder = "已配置服务端默认 Key（留空即可）";
-      refreshRunBadge();
+    } else if (d.base_url || d.model) {
+      $("llmKey").placeholder = "粘贴你的 API Key（GLM/DeepSeek/OpenAI 兼容）";
     }
+    window.__hospital = d.hospital || "";  // 报告打印抬头
+    refreshRunBadge();
   } catch (e) { /* ignore */ }
+}
+
+/* ---------------- 检验参考值支持库 ---------------- */
+async function loadReference(q) {
+  try {
+    const res = await fetch("/api/reference?q=" + encodeURIComponent(q || ""));
+    const data = await res.json();
+    const list = $("refList");
+    const items = data.items || [];
+    $("refCount").textContent = "(" + items.length + ")";
+    list.innerHTML = "";
+    if (!items.length) { list.innerHTML = '<div class="doc-empty">无匹配项目</div>'; return; }
+    for (const r of items) {
+      const row = document.createElement("div");
+      row.className = "ref-item";
+      row.title = (r.note || "") + "（点✕删除）";
+      row.innerHTML = '<div class="ref-main"><b>' + escapeHtml(r.item) + '</b> <span class="ref-en">' + escapeHtml(r.en || "") +
+        '</span><br><span class="ref-range">' + escapeHtml(r.range + " " + (r.unit || "")) + '</span>' +
+        (r.note ? '<div class="ref-note">' + escapeHtml(r.note) + '</div>' : '') + '</div><button class="doc-del" title="删除">✕</button>';
+      row.querySelector(".doc-del").onclick = async (e) => {
+        e.stopPropagation();
+        await fetch("/api/reference/delete", { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ item: r.item }) });
+        loadReference($("refSearch").value.trim());
+      };
+      list.appendChild(row);
+    }
+  } catch (e) { /* 静默 */ }
+}
+
+async function addReference() {
+  const item = window.prompt("项目名称（如：血酮）：", "");
+  if (!item) return;
+  const en = window.prompt("英文缩写（可空）：", "") || "";
+  const range = window.prompt("参考范围（如 3.5-5.3）：", "") || "";
+  const unit = window.prompt("单位（可空）：", "") || "";
+  const note = window.prompt("临床意义（可空）：", "") || "";
+  await fetch("/api/reference/save", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ item, en, range, unit, note }) });
+  loadReference("");
+}
+
+/* ---------------- 会诊技能包 ---------------- */
+async function loadSkills() {
+  try {
+    const res = await fetch("/api/skills");
+    const data = await res.json();
+    const box = $("skillBoxes");
+    if (!box) return;
+    box.innerHTML = "";
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}").skills || [];
+    for (const sk of (data.skills || [])) {
+      const label = document.createElement("label");
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.value = sk.id;
+      cb.checked = saved.includes(sk.id);
+      label.title = sk.prompt;
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode("🧩 " + sk.name + (sk.desc ? "（" + sk.desc + "）" : "")));
+      label.classList.toggle("on", cb.checked);
+      cb.onchange = () => label.classList.toggle("on", cb.checked);
+      box.appendChild(label);
+    }
+  } catch (e) { /* 静默 */ }
+}
+
+function selectedSkills() {
+  return [...document.querySelectorAll("#skillBoxes input:checked")].map((cb) => cb.value);
+}
+
+async function addSkill() {
+  const name = window.prompt("技能名称（如：卒中溶栓）", "");
+  if (!name) return;
+  const desc = window.prompt("一句话描述（可空）", "") || "";
+  const prompt = window.prompt("技能指令（注入专家系统提示词的专业要求）", "");
+  if (!prompt) return;
+  await fetch("/api/skills/save", { method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, desc, prompt }) });
+  loadSkills();
+}
+
+async function delSelectedSkills() {
+  const ids = [...document.querySelectorAll("#skillBoxes input:checked")].map((cb) => cb.value);
+  if (!ids.length) { alert("请先勾选要删除的技能。"); return; }
+  if (!window.confirm("确定删除选中的 " + ids.length + " 个技能？")) return;
+  for (const id of ids) {
+    await fetch("/api/skills/delete", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }) });
+  }
+  loadSkills();
 }
 
 /* ---------------- 初始化 ---------------- */
@@ -348,6 +457,7 @@ async function init() {
     loadDocs();
     loadSessions();
     loadPromptPool();
+    loadSkills();
     loadServerDefaults();
     const res = await fetch("/api/datasets");
     const data = await res.json();
@@ -359,6 +469,31 @@ async function init() {
     addSystem("⚠ 初始化失败：" + e.message + "（请确认服务已启动）");
   }
   refreshRunBadge();
+  runDemoHook();
+}
+
+/* ?demo= 演示钩子：用于快速展示与文档截图（demo=acs 自动跑一场胸痛会诊 / demo=settings 打开设置） */
+function runDemoHook() {
+  const demo = new URLSearchParams(location.search).get("demo");
+  if (!demo) return;
+  const splash = document.getElementById("splash");
+  if (splash) { splash.classList.add("splash-out"); setTimeout(() => splash.remove(), 450); }
+  if (demo === "settings") {
+    document.getElementById("btnSettings").click();
+    return;
+  }
+  if (demo === "acs") {
+    document.getElementById("runMode").value = "mock";
+    document.getElementById("mdtRounds").value = "1";
+    document.querySelectorAll("#specBoxes input").forEach((cb) => {
+      cb.checked = cb.value === "internal";
+      cb.dispatchEvent(new Event("change"));
+    });
+    const el = $("humanInput");
+    el.value = "58岁男性，胸痛伴冷汗3小时，向左肩放射，高血压病史8年，服用氨氯地平，血压150/95，心电图已送检，肌钙蛋白待回。";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    submitMdt(el.value, { skipClarify: true });
+  }
 }
 
 function fillBiasSelects() {
@@ -439,7 +574,12 @@ function buildPromptEditors() {
 }
 
 function bindEvents() {
-  $("modeAuto").onclick = () => switchMode("auto");
+
+  $("btnDemo").onclick = () => {  // 演示已并入训练台：一键 AI 医生自动演示
+    if (state.caseId == null) { const first = document.querySelector(".case-item"); if (first) first.click(); }
+    setMode("auto");
+    startConsultation();
+  };
   $("modeHuman").onclick = () => switchMode("human");
   $("modeMdt").onclick = () => switchMode("mdt");
   $("btnStart").onclick = startConsultation;
@@ -467,7 +607,7 @@ function bindEvents() {
     const t = state.mdtText;
     state.mdtStage = "input";
     $("tipSkip").style.display = "none";
-    submitMdt(t);
+    submitMdt(t, { skipClarify: true });  // 真正跳过预问诊，直达会诊
   };
   $("btnUpload").onclick = () => $("fileInput").click();
   $("fileInput").addEventListener("change", uploadFiles);
@@ -479,6 +619,11 @@ function bindEvents() {
   };
   $("caseSearch").addEventListener("input", filterCases);
   $("teamPreset").onchange = applyTeamPreset;
+  $("refSearch").addEventListener("input", () => loadReference($("refSearch").value.trim()));
+  $("sessSearch").addEventListener("input", renderSessions);
+  $("btnSkillAdd").onclick = addSkill;
+  $("btnSkillDel").onclick = delSelectedSkills;
+  loadReference("");
   document.querySelectorAll(".splash-card").forEach((card) => {
     card.onclick = () => enterWorkspace(card.dataset.mode);
   });
@@ -556,7 +701,10 @@ async function testConnection() {
       body: JSON.stringify(collectSettings()),
     });
     const data = await res.json();
-    if (data.ok) { out.textContent = "✅ 连接成功：" + (data.reply || "").slice(0, 40); out.className = "test-result ok"; }
+    if (data.ok) {
+      out.textContent = "✅ 连接成功" + (data.model ? "（" + data.model + "）" : "") + "：" + (data.reply || "").slice(0, 40);
+      out.className = "test-result ok";
+    }
     else { out.textContent = "❌ " + (data.error || "失败").slice(0, 120); out.className = "test-result bad"; }
   } catch (e) {
     out.textContent = "❌ " + e.message; out.className = "test-result bad";
@@ -645,14 +793,18 @@ function switchMode(m) {
 
 function setMode(m) {
   state.mode = m;
-  $("modeAuto").classList.toggle("active", m === "auto");
-  $("modeHuman").classList.toggle("active", m === "human");
   $("modeMdt").classList.toggle("active", m === "mdt");
+  $("modeHuman").classList.toggle("active", m === "human");
   const human = m === "human";
   const mdt = m === "mdt";
-  const canType = (human || mdt) && !state.finished && !state.running;
+  const auto = m === "auto";
+  // MDT：报告生成后仍可输入 —— 进入“报告追问”模式
+  const hasReport = state.transcript.some((t) => t.role === "report");
+  const canType = !state.running && (human || mdt) && (!state.finished || (mdt && hasReport));
   $("humanInput").disabled = !canType;
   $("btnSend").disabled = !canType;
+  // 演示已并入训练台：训练台且有病例时提供“AI演示”一键按钮
+  $("btnDemo").style.display = (human && state.caseId != null && !state.running && !state.finished) ? "inline-block" : "none";
   document.querySelectorAll(".tip[data-fill]").forEach((b) => {
     b.style.display = human ? "inline-block" : "none";
   });
@@ -666,12 +818,14 @@ function setMode(m) {
         : "描述您的症状 / 粘贴检查报告…（可点上方「填写问诊单」更规范）")
     : "以医生身份向患者提问…（Enter 发送）";
   $("composerNote").textContent = mdt
-    ? (state.mdtRole === "doctor"
-        ? "医生会诊参考：粘贴脱敏病历 → 专科会诊团独立意见与讨论 → 会诊参考报告（可复制入病历）。"
-        : "会诊流程：提交病情 → 会诊助理整理摘要与追问 → 各专科独立意见 → 交叉讨论 → 会诊参考报告。")
+    ? (state.finished && hasReport
+        ? "报告追问：输入框可直接就本报告向会诊主持人提问（上下文已带上报告与讨论记录）。"
+        : state.mdtRole === "doctor"
+          ? "医生会诊参考：粘贴脱敏病历 → 专科会诊团独立意见与讨论 → 会诊参考报告（可复制入病历）。"
+          : "会诊流程：提交病情 → 会诊助理整理摘要与追问 → 各专科独立意见 → 交叉讨论 → 会诊参考报告。")
     : human
       ? "问诊训练：与 AI 患者对话练习问诊；支持 REQUEST TEST 开检查 / DIAGNOSIS READY 提交诊断，结束后自动判分。"
-      : "演示观摩台自动完成整场会诊，无需输入。";
+      : "AI 医生演示中：自动完成问诊→检查→诊断→判分全流程。";
   $("btnStart").textContent = mdt ? "👥 发起会诊" : human ? "▶ 开始接诊训练" : "▶ 开始演示";
   const startable = mdt ? true : state.caseId != null;  // caseId 可能为 0，不能用真值判断
   $("btnStart").disabled = !startable || state.running || state.finished;
@@ -692,8 +846,10 @@ function genIntake() {
   const symptom = g("inSymptom");
   if (!symptom) { addSystem("⚠ 请至少填写「主要症状」。"); $("inSymptom").focus(); return; }
   const parts = [];
+  const visit = g("inVisit");
+  if (visit) { parts.push(`【就诊标识】${visit}。`); }
   const who = [g("inAge") && g("inAge") + "岁", g("inSex") && g("inSex") + "性"].filter(Boolean).join("");
-  parts.push(who ? `患者${who}，` : "");
+  parts.push(who ? `患者${who}，` : "患者，");
   parts.push(`主要症状：${symptom}。`);
   if (g("inDuration")) parts.push(`症状持续${g("inDuration")}。`);
   if (g("inFactor")) parts.push(`加重/缓解因素：${g("inFactor")}。`);
@@ -703,6 +859,7 @@ function genIntake() {
   $("intakeModal").classList.add("hidden");
   autoGrow();
   $("humanInput").focus();
+  state.mdtTitle = (visit ? visit.slice(0, 14) + "·" : "") + symptom.slice(0, 12);
   addSystem("问诊单已生成，可直接「发起 MDT 会诊」，也可继续补充描述。");
 }
 
@@ -717,6 +874,7 @@ function resetConsultation() {
   $("chat").innerHTML = "";
   $("progress").textContent = "";
   $("btnStop").style.display = "none";
+  $("btnReset").disabled = true;  // 重置按钮：会诊进行/结束后启用，见下
   if (state.caseId == null) {
     $("chat").innerHTML = `
       <div class="empty-hint">
@@ -742,6 +900,7 @@ async function startConsultation() {
   state.running = true;
   state.finished = false;
   $("btnStart").disabled = true;
+  $("btnReset").disabled = false;  // 会诊开始后允许随时重置
   $("btnStop").style.display = "inline-block";
   addSystem(`会诊开始 · ${state.mode === "auto" ? "观摩模式（AI 医生主诊）" : "问诊模式（由你主诊）"} · ${$("runBadge").textContent}`);
   if (state.mode === "auto") {
@@ -779,8 +938,11 @@ async function autoLoop() {
 async function sendHuman() {
   if (state.mode === "mdt") {
     const text = $("humanInput").value.trim();
-    if (!text) { addSystem("⚠ 请先描述病情。"); $("humanInput").focus(); return; }
-    return runMdt(text);
+    if (!text) { addSystem("⚠ 请先输入内容。"); $("humanInput").focus(); return; }
+    if (state.running) return;
+    // MDT 输入路由：报告已出 → 主持人追问；否则按阶段走会诊/追问流程
+    if (state.finished) return submitFollowup(text);
+    return submitMdt(text);
   }
   const input = $("humanInput");
   const q = input.value.trim();
@@ -819,9 +981,10 @@ function renderAssistantMsg(text) {
   scrollBottom();
 }
 
-async function submitMdt(answerText) {
+async function submitMdt(answerText, opts) {
   const input = $("humanInput");
   const text = (answerText !== undefined ? answerText : input.value).trim();
+  const skipClarify = !!(opts && opts.skipClarify);
   if (state.mdtStage === "clarify" && !text) {
     addSystem("⚠ 请先回答上方问题，或点「跳过追问」。"); input.focus(); return;
   }
@@ -834,13 +997,21 @@ async function submitMdt(answerText) {
   state.history = [];
   state.running = true;
   state.finished = false;
+  if (state.mdtStage === "input") state.mdtTitle = text.slice(0, 18);
   $("btnStart").disabled = true;
+  $("btnReset").disabled = false;  // 会诊开始后允许随时重置
   $("btnSend").disabled = true;
   input.disabled = true;
   $("btnStop").style.display = "inline-block";
   const typing = addTyping("📋", state.mdtStage === "clarify" ? "专家组会诊中（真实模型约 1-2 分钟）…" : "会诊助理分析中…");
   try {
-    if (state.mdtStage === "input") {
+    if (state.mdtStage === "input" && skipClarify) {
+      // 「跳过追问」：不做预问诊，直接进入正式会诊
+      renderUserMsg(text);
+      state.mdtText = text;
+      typing.remove();
+      await doMdt(text);
+    } else if (state.mdtStage === "input") {
       renderUserMsg(text);
       state.mdtText = text;
       const res = await fetch("/api/mdt/clarify", {
@@ -903,6 +1074,7 @@ async function doMdt(text) {
     if (data.error) {
       addSystem("⚠ " + data.error);
     } else {
+      if (data.notice) addSystem("⚠ " + data.notice);
       for (const ev of data.events) {
         if (!state.running) break;
         renderMdtEvent(ev);
@@ -921,6 +1093,14 @@ async function doMdt(text) {
 
 function renderMdtEvent(ev) {
   if (ev.role === "report") return renderReport(ev.report);
+  if (ev.role === "triage") {
+    const banner = document.createElement("div");
+    banner.className = "triage-banner";
+    banner.innerHTML = "🚨 <b>危急征象识别</b>：" + escapeHtml(ev.text);
+    $("chat").appendChild(banner);
+    scrollBottom();
+    return;
+  }
   state.transcript.push({ role: ev.role, name: ev.name, emoji: ev.emoji, round: ev.round, text: ev.text });
   const chat = $("chat");
   const row = document.createElement("div");
@@ -945,12 +1125,11 @@ function renderMdtEvent(ev) {
   scrollBottom();
 }
 
-function renderReport(r) {
+function renderReport(r, replay) {
   state.finished = true;
-  state.transcript.push({ role: "report", name: "主持人 Agent", emoji: "⚖️", text: JSON.stringify(r) });
+  state.transcript.push({ role: "report", name: "主持人 Agent", emoji: "⚖️",
+                          text: typeof r === "string" ? r : JSON.stringify(r), report: r });
   const chat = $("chat");
-  const card = document.createElement("div");
-  card.className = "report-card";
   const md = [
     "# 会诊参考报告（MDT）",
     "- 倾向判断（供参考）：" + (r.final_diagnosis || ""),
@@ -964,27 +1143,149 @@ function renderReport(r) {
     "- 注意事项：" + (r.warnings || ""),
   ].join("\n");
   const lis = (arr) => (arr || []).map((x) => `<li>${escapeHtml(String(x))}</li>`).join("");
+  const card = document.createElement("div");
+  card.className = "report-card";
   card.innerHTML = `
     <div class="report-head">
       <h3>⚖️ 会诊参考报告（多学科）</h3>
-      <button class="copy-btn" data-text="${escapeHtml(md)}">复制</button>
+      <span class="report-btns">
+        <button class="copy-btn" data-text="${escapeHtml(md)}">复制</button>
+        <button class="report-btn rp-print" title="打印报告（含医院抬头与签名栏）">🖨 打印</button>
+        <button class="report-btn rp-export" title="导出为 HTML 文件存档">⬇ 导出</button>
+        <button class="report-btn rp-good" title="采纳本次会诊结论，沉淀入本院经验库">👍 有帮助</button>
+        <button class="report-btn rp-bad" title="标记需修正并可填写修正意见（长期学习）">👎 需修正</button>
+      </span>
     </div>
     <div class="report-grid">
       <div class="report-item"><span>倾向判断（供参考）</span><b>${escapeHtml(r.final_diagnosis || "")}</b></div>
-      <div class="report-item"><span>置信度</span><b>${escapeHtml(r.confidence || "")}</b></div>
+      <div class="report-item"><span>置信度</span><b>${escapeHtml((r.confidence || "") + (r.data_completeness ? "（资料完备度 " + r.data_completeness + "）" : ""))}</b></div>
       <div class="report-item"><span>建议就诊科室</span><b>${escapeHtml(r.recommended_dept || "内科门诊")}</b></div>
     </div>
+    ${r.missing_info ? `<div class="report-missing">📋 ${escapeHtml(r.missing_info)}（完善后置信度更可靠）</div>` : ""}
     ${r.key_findings && r.key_findings.length ? `<h4>主要依据</h4><ul>${lis(r.key_findings)}</ul>` : ""}
     ${r.plan && r.plan.length ? `<h4>方案建议</h4><ul>${lis(r.plan)}</ul>` : ""}
     ${r.calculations && r.calculations.length ? `<h4>🧮 工具计算</h4><ul>${lis(r.calculations)}</ul>` : ""}
     <div class="report-item"><span>分歧说明</span>${escapeHtml(r.disagreements || "无")}</div>
     ${r.red_flags && r.red_flags.length ? `<div class="report-danger">🚨 <b>紧急警示</b>：${escapeHtml(r.red_flags.join("；"))}</div>` : ""}
-    <div class="report-warn">⚠ ${escapeHtml(r.warnings || "本报告仅供研究演示，不构成医疗建议。")}</div>`;
+    <div class="report-warn">⚠ ${escapeHtml(r.warnings || "本报告仅供研究演示，不构成医疗建议。")}</div>
+    <div class="report-sign"><span>会诊主持人（医师）签名：______________</span><span>日期：______________</span></div>`;
   chat.appendChild(card);
-  addSystem("MDT 会诊结束 · 会诊参考报告已生成");
+  card.querySelector(".rp-print").onclick = () => printReport(r);
+  card.querySelector(".rp-export").onclick = () => exportReport(r);
+  card.querySelector(".rp-good").onclick = () => sendFeedback(r, true, "");
+  card.querySelector(".rp-bad").onclick = () => {
+    const note = window.prompt("请说明需要修正的地方（将沉淀入本院经验库）：", "");
+    if (note === null) return;
+    sendFeedback(r, false, note);
+  };
+  addSystem(replay ? "回放：以上为该场会诊的参考报告" : "MDT 会诊结束 · 会诊参考报告已生成");
   $("progress").textContent = "MDT 会诊已结束";
   scrollBottom();
-  autoSaveSession();
+  if (!replay) autoSaveSession();
+}
+
+/* 报告打印 / 导出：医院存档场景（抬头可配 config.json 的 hospital_name） */
+function reportStandaloneHtml(r) {
+  const hosp = window.__hospital || "汇诊会诊中心";
+  const ts = new Date().toLocaleString("zh-CN", { hour12: false });
+  const li = (arr) => (arr || []).map((x) => `<li>${escapeHtml(String(x))}</li>`).join("");
+  return `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><title>多学科会诊参考报告</title>
+<style>
+  body{font-family:"Microsoft YaHei","PingFang SC",sans-serif;margin:40px;color:#111}
+  .hosp{font-size:15px;text-align:center;color:#333;letter-spacing:2px}
+  h1{font-size:21px;text-align:center;margin:6px 0 2px}
+  .meta{font-size:12px;color:#666;text-align:center;border-bottom:1px solid #bbb;padding:8px 0 10px;margin-bottom:14px}
+  h3{font-size:15px;margin:16px 0 6px;border-left:4px solid #2a7;padding-left:8px}
+  li{margin:5px 0;font-size:13px}
+  table{width:100%;border-collapse:collapse;margin:10px 0}
+  td{border:1px solid #ccc;padding:7px 9px;font-size:13px}
+  td:first-child{width:130px;background:#f4f6f5;font-weight:bold}
+  .danger{background:#fdecec;border:1px solid #e39393;padding:9px;font-size:13px;margin-top:12px}
+  .warn{background:#fff7e6;border:1px solid #f0c36d;padding:9px;font-size:12px;margin-top:10px}
+  .sign{margin-top:56px;font-size:13px;display:flex;justify-content:space-between}
+  @media print{ .sign{margin-top:40px} }
+</style></head><body>
+<div class="hosp">${escapeHtml(hosp)}</div>
+<h1>多学科会诊参考报告（MDT）</h1>
+<div class="meta">生成时间：${escapeHtml(ts)} ｜ 平台：汇诊 MedConsult（AI 辅助，仅供临床参考）</div>
+<table>
+  <tr><td>倾向判断（供参考）</td><td>${escapeHtml(r.final_diagnosis || "")}</td></tr>
+  <tr><td>置信度</td><td>${escapeHtml(r.confidence || "")}</td></tr>
+  <tr><td>建议就诊科室</td><td>${escapeHtml(r.recommended_dept || "")}</td></tr>
+  ${r.calculations && r.calculations.length ? `<tr><td>工具计算</td><td>${escapeHtml(r.calculations.join("；"))}</td></tr>` : ""}
+  ${r.disagreements ? `<tr><td>分歧说明</td><td>${escapeHtml(r.disagreements)}</td></tr>` : ""}
+</table>
+${r.key_findings && r.key_findings.length ? `<h3>主要依据</h3><ul>${li(r.key_findings)}</ul>` : ""}
+${r.plan && r.plan.length ? `<h3>方案建议</h3><ul>${li(r.plan)}</ul>` : ""}
+${r.red_flags && r.red_flags.length ? `<div class="danger">🚨 紧急警示：${escapeHtml(r.red_flags.join("；"))}</div>` : ""}
+<div class="warn">⚠ ${escapeHtml(r.warnings || "本报告由 AI 生成，仅供研究演示，不构成医疗建议。")}</div>
+<div class="sign"><span>会诊主持人（医师）签名：______________</span><span>审核医师签名：______________</span><span>日期：______________</span></div>
+</body></html>`;
+}
+
+function printReport(r) {
+  const old = document.querySelector("iframe#report-print");
+  if (old) old.remove();
+  const frame = document.createElement("iframe");
+  frame.id = "report-print";
+  frame.style.cssText = "position:fixed;right:0;bottom:0;width:0;height:0;border:0";
+  document.body.appendChild(frame);
+  const doc = frame.contentWindow.document;
+  doc.open(); doc.write(reportStandaloneHtml(r)); doc.close();
+  setTimeout(() => {
+    try { frame.contentWindow.focus(); frame.contentWindow.print(); }
+    catch (e) { addSystem("⚠ 当前浏览器环境不支持静默打印，请用「⬇ 导出」保存后打印。"); }
+    setTimeout(() => frame.remove(), 3000);
+  }, 350);
+}
+
+async function sendFeedback(r, helpful, note) {
+  const visit = ((state.transcript.find((t) => t.role === "summary")?.text || "").match(/【就诊标识】(.*?)。/) || [])[1] || "";
+  try {
+    await fetch("/api/feedback/save", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: state.mdtTitle || $("caseTitle").textContent.slice(0, 30),
+        diagnosis: r.final_diagnosis || "", helpful, note, visit }) });
+    addSystem(helpful ? "已记录：本次会诊结论标记为有帮助，已沉淀入本院经验库。"
+                       : "已记录修正意见，后续相似会诊将注入此经验供专家对照。");
+  } catch (e) { addSystem("⚠ 反馈保存失败：" + e.message); }
+}
+
+function exportReport(r) {
+  const blob = new Blob([reportStandaloneHtml(r)], { type: "text/html;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = "会诊报告_" + (state.mdtTitle || "MDT") + "_" + new Date().toISOString().slice(0, 10) + ".html";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  addSystem("报告已导出为 HTML 文件（可用浏览器打开打印，或作为存档）。");
+}
+
+/* ---------------- 报告追问（医生 ↔ 主持人 Agent） ---------------- */
+async function submitFollowup(text) {
+  const reportEv = [...state.transcript].reverse().find((t) => t.role === "report");
+  if (!reportEv || !reportEv.report) { addSystem("⚠ 本场没有可追问的报告，请先发起会诊。"); return; }
+  renderUserMsg(text, "追问");
+  const typing = addTyping("⚖️", "主持人结合会诊上下文思考中…");
+  try {
+    const res = await fetch("/api/mdt/followup", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        text,
+        report: reportEv.report,
+        tail: state.transcript.filter((t) => t.role !== "report").slice(-6),
+        settings: collectSettings(),
+      }),
+    });
+    const data = await res.json();
+    typing.remove();
+    if (data.error) { addSystem("⚠ " + data.error); return; }
+    renderMdtEvent({ role: "specialist", name: "会诊主持人（追问）", emoji: "⚖️", round: 0, text: data.reply });
+  } catch (e) {
+    typing.remove();
+    addSystem("⚠ 网络错误：" + e.message);
+  }
 }
 
 /* ---------------- API ---------------- */
@@ -1004,6 +1305,7 @@ async function step(endpoint, question) {
     });
     const data = await res.json();
     if (data.error) { addSystem("⚠ " + data.error); return null; }
+    if (data.event && data.event.notice) addSystem("⚠ " + data.event.notice);
     return data.event;
   } catch (e) {
     addSystem("⚠ 网络错误：" + e.message);
@@ -1027,6 +1329,7 @@ function collectSettings() {
     temperature: parseFloat($("temperature").value) || 0.05,
     max_tokens: parseInt($("maxTokens").value, 10) || 400,
     mdt_specialties: selectedSpecs(),
+    skills: selectedSkills(),
     mdt_rounds: parseInt($("mdtRounds").value, 10) || 2,
     spec_style: $("specStyle").value || "brief",
     doctor_prompt: $("prompt_doctor").value.trim(),

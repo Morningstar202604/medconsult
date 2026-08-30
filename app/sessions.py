@@ -3,6 +3,7 @@ import json
 import os
 import threading
 import time
+import uuid
 
 _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PATH = os.path.join(_BASE, "library", "sessions.json")
@@ -29,7 +30,8 @@ def save(mode, title, items, report=None):
     with _lock:
         data = _load()
         entry = {
-            "id": str(int(time.time() * 1000)),
+            # 时间戳 + 随机后缀：避免同一毫秒内连存两条时 ID 撞车、删除误伤
+            "id": "{}-{}".format(int(time.time() * 1000), uuid.uuid4().hex[:6]),
             "ts": time.strftime("%Y-%m-%d %H:%M"),
             "mode": mode,
             "title": (title or "未命名会诊")[:60],

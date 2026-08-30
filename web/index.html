@@ -25,13 +25,7 @@
       <div class="splash-card" data-mode="human">
         <div class="sc-icon">🧑‍⚕️</div>
         <h3>问诊训练台</h3>
-        <p>与 AI 患者真实对话练习问诊，支持开检查单与提交诊断，主持人自动判分反馈。面向医学生教学与医生培训。</p>
-        <span class="sc-go">进入 →</span>
-      </div>
-      <div class="splash-card" data-mode="auto">
-        <div class="sc-icon">🤖</div>
-        <h3>演示观摩台</h3>
-        <p>自动完整演示一场标准 AI 会诊全流程（问诊→检查→诊断→判分）。面向产品展示、课堂示范与销售演示。</p>
+        <p>与 AI 患者真实对话练习问诊，支持开检查单与提交诊断；也可一键观摩 AI 医生自动演示全流程。面向医学生教学与医院培训。</p>
         <span class="sc-go">进入 →</span>
       </div>
     </div>
@@ -51,20 +45,22 @@
       </div>
     </div>
 
-    <div class="mode-switch">
-      <button id="modeMdt" class="mode-btn active">
-        <span class="mode-icon">👥</span>
-        <span class="mode-text"><span class="mode-name">会诊工作台</span><span class="mode-desc">提交病情 → 多专科讨论出方案</span></span>
-      </button>
-      <button id="modeHuman" class="mode-btn">
-        <span class="mode-icon">🧑‍⚕️</span>
-        <span class="mode-text"><span class="mode-name">问诊训练台</span><span class="mode-desc">与 AI 患者对话练习问诊</span></span>
-      </button>
-      <button id="modeAuto" class="mode-btn">
-        <span class="mode-icon">🤖</span>
-        <span class="mode-text"><span class="mode-name">演示观摩台</span><span class="mode-desc">自动演示标准会诊流程</span></span>
-      </button>
-    </div>
+      <div class="mode-switch">
+        <button id="modeMdt" class="mode-btn active">
+          <span class="mode-icon">👥</span>
+          <span class="mode-text"><span class="mode-name">会诊工作台</span><span class="mode-desc">提交病情 → 多专科讨论出方案</span></span>
+        </button>
+        <button id="modeHuman" class="mode-btn">
+          <span class="mode-icon">🧑‍⚕️</span>
+          <span class="mode-text"><span class="mode-name">问诊训练台</span><span class="mode-desc">与 AI 患者对话练习 / 观摩 AI 演示</span></span>
+        </button>
+      </div>
+
+      <div class="sec">
+        <div class="sec-title">🧾 检验参考值 <span id="refCount" class="count"></span></div>
+        <input id="refSearch" class="case-search" placeholder="🔍 项目名/缩写，如 肌钙蛋白、BNP…">
+        <div id="refList" class="doc-list ref-list"></div>
+      </div>
 
     <div class="sec">
       <div class="sec-title">📁 我的文档库 <span id="docCount" class="count"></span></div>
@@ -86,6 +82,7 @@
     <div class="sec">
       <div class="sec-title">🕘 会诊记录 <span id="sessCount" class="count"></span>
         <button id="btnSessClear" class="sess-clear" title="清空全部记录">清空</button></div>
+      <input id="sessSearch" class="case-search" placeholder="🔍 按标题/就诊标识搜索…">
       <div id="sessList" class="sess-list"></div>
     </div>
 
@@ -106,6 +103,7 @@
         <span id="runBadge" class="run-badge mock">模拟演示</span>
         <span id="progress" class="progress"></span>
         <button id="btnStop" class="btn ghost" style="display:none">■ 停止</button>
+        <button id="btnDemo" class="btn ghost" style="display:none" title="由 AI 医生自动完成一场标准问诊演示">🤖 AI演示</button>
         <button id="btnStart" class="btn primary" disabled>▶ 开始会诊</button>
         <button id="btnReset" class="btn ghost" disabled>↺ 重置</button>
       </div>
@@ -157,12 +155,15 @@
         </div>
         <div class="modal-body">
           <div class="set-row-2">
+            <label class="fld"><span>就诊号 / 患者标识 <i>（选填，仅本机）</i></span><input id="inVisit" class="inp" placeholder="如：门诊号 M20260830-01 或 姓氏简称"></label>
             <label class="fld"><span>年龄</span><input id="inAge" class="inp" placeholder="如：35"></label>
+          </div>
+          <div class="set-row-2">
             <label class="fld"><span>性别</span>
               <select id="inSex" class="inp"><option value="">未填</option><option>男</option><option>女</option></select>
             </label>
+            <label class="fld"><span>主要症状 *</span><input id="inSymptom" class="inp" placeholder="如：头痛、发热、咳嗽、腹痛…"></label>
           </div>
-          <label class="fld"><span>主要症状 *</span><input id="inSymptom" class="inp" placeholder="如：头痛、发热、咳嗽、腹痛…"></label>
           <label class="fld"><span>症状持续多久</span><input id="inDuration" class="inp" placeholder="如：3 天 / 2 周 / 1 个月"></label>
           <label class="fld"><span>加重或缓解因素</span><input id="inFactor" class="inp" placeholder="如：活动后加重、休息后缓解、夜间明显"></label>
           <label class="fld"><span>既往病史</span><input id="inHistory" class="inp" placeholder="如：高血压 5 年；没有可留空"></label>
@@ -262,6 +263,15 @@
             <div class="set-row">
               <div class="fld" style="width:100%"><span>参与专科（多选，可自行组合）</span>
                 <div id="specBoxes" class="spec-boxes"></div>
+              </div>
+            </div>
+            <div class="set-row">
+              <div class="fld" style="width:100%"><span>会诊技能（勾选后注入本场全部专家与主持人）
+                <button type="button" class="pe-btn" id="btnSkillAdd">＋ 新增</button>
+                <button type="button" class="pe-btn" id="btnSkillDel">删除选中</button>
+              </span>
+                <div id="skillBoxes" class="spec-boxes"></div>
+                <i style="font-size:10.5px;color:#94a3b8">技能 = 可复用的专科会诊指令（提示词工程资产），医院可沉淀自己的科室技能库</i>
               </div>
             </div>
             <div class="set-row-2">

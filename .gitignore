@@ -12,3 +12,9 @@ shot_*.png
 # 服务端默认配置与用户文档库
 config.json
 library/
+me_engine/pending/
+me_engine/answers/
+me_engine/engine.log
+server.log
+nul
+me_engine/engine.log

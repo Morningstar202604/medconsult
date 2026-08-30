@@ -4,8 +4,10 @@
 因此增删立即生效、无需重启；会诊时可引用文档内容作为依据。
 """
 import hashlib
+import json
 import os
 import re
+import threading
 
 from . import rag
 
@@ -13,8 +15,12 @@ _BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DOC_DIR = os.path.join(_BASE, "library", "documents")
 
 TEXT_EXTS = {".txt", ".md", ".json", ".csv", ".log", ".htm", ".html", ".xml"}
+# 上传白名单：文本类 + 可解析的 pdf/docx；其余一律拒绝（医院环境防误传可执行文件）
+ALLOWED_EXTS = TEXT_EXTS | {".pdf", ".docx"}
 
 MAX_DOC_CHARS = 60000  # 单篇入库上限（超出截断保存）
+
+_write_lock = threading.Lock()
 
 
 def _ensure_dir():
@@ -65,16 +71,19 @@ def meta(name):
 
 
 def save_bytes(name, data: bytes):
-    _ensure_dir()
     name = safe_name(name)
     ext = os.path.splitext(name)[1].lower()
-    path = os.path.join(DOC_DIR, name)
-    with open(path, "wb") as f:
-        f.write(data)
-    text = _extract_text(path, ext)
-    with open(path + ".txt", "w", encoding="utf-8") as f:
-        f.write(text[:MAX_DOC_CHARS])
-    rag.index_doc(name, text)  # 检索工具：入库即建分块索引
+    if ext not in ALLOWED_EXTS:
+        raise ValueError("不支持的文件类型: {}".format(ext or "(无扩展名)"))
+    with _write_lock:
+        _ensure_dir()
+        path = os.path.join(DOC_DIR, name)
+        with open(path, "wb") as f:
+            f.write(data)
+        text = _extract_text(path, ext)
+        with open(path + ".txt", "w", encoding="utf-8") as f:
+            f.write(text[:MAX_DOC_CHARS])
+        rag.index_doc(name, text)  # 检索工具：入库即建分块索引
     return meta(name)
 
 
@@ -84,12 +93,13 @@ def save_text(name, content: str):
 
 def delete(name):
     name = safe_name(name)
-    path = os.path.join(DOC_DIR, name)
-    removed = False
-    for p in (path, path + ".txt"):
-        if os.path.exists(p):
-            os.remove(p)
-            removed = True
+    with _write_lock:
+        path = os.path.join(DOC_DIR, name)
+        removed = False
+        for p in (path, path + ".txt"):
+            if os.path.exists(p):
+                os.remove(p)
+                removed = True
     if removed:
         rag.remove_doc(name)
     return removed
