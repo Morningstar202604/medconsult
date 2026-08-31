@@ -3,5 +3,5 @@
 # 预编译包且 Web 端不使用，后者属标准库不应列在 requirements。
 # agentclinic.py 等研究脚本依赖见 requirements-research.txt。
 openai>=3.5.0,<4
-pypdf>=4.0          # 文档库 PDF 文本提取（README 宣称支持但依赖原先缺失）
+pypdf>=6.16.2          # 文档库 PDF 文本提取（README 宣称支持但依赖原先缺失）
 python-docx>=1.2.0    # 文档库 DOCX 文本提取（同上）
