@@ -4,4 +4,4 @@ anthropic
 replicate
 transformers
 datasets
-regex>=2024.4.16    # 旧版 2023.12.25 在 Python 3.13 上无法构建
+regex>=2026.7.19    # 旧版 2023.12.25 在 Python 3.13 上无法构建
