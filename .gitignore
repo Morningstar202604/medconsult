@@ -1,20 +1,17 @@
-__pycache__/*
-results/*
-*_results*.py
-*.out
-
-
-# 汇诊平台
+# --- Python ---
 __pycache__/
+*.pyc
 .venv/
-shot_*.png
+.pytest_cache/
+backend/data/
+backend/.env
+backend/.phi_key
 
-# 服务端默认配置与用户文档库
-config.json
-library/
-me_engine/pending/
-me_engine/answers/
-me_engine/engine.log
-server.log
-nul
-me_engine/engine.log
+# --- Node ---
+node_modules/
+frontend/dist/
+frontend/.vite/
+
+# --- 系统 ---
+.DS_Store
+*.log

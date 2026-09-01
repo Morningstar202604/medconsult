@@ -1,138 +1,175 @@
-<div align="center">
+# MedConsult Pro · 汇诊
 
-# 🏥 MedConsult · 汇诊
+生产级医院多学科 AI 会诊（MDT）平台。基于开源项目 [Morningstar202604/medconsult](https://github.com/Morningstar202604/medconsult) 的深度审查后重构：**消灭了原版全部致命问题**，从"零框架 Demo"升级为**可部署、可审计、可进病案流程**的临床工作站系统。
 
-**A local-first, hospital-oriented multi-agent MDT consultation platform**
-
-*Multi-specialist AI consultation · Clinical scoring tools · Lab reference library · Prompt layering & Skills · Closed-loop learning · Report printing & archiving*
-
-[English](README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md)
-
-`MIT License` `Python 3.10+` `Zero web framework` `Data stays on your machine`
-
-**MDT** · **Clinical Decision Support** · **Multi-Agent** · **RAG** · **EMR/HIS-friendly** · **DeepSeek / GLM / Qwen / OpenAI / Ollama**
-
-[🚀 Quick Start](#-quick-start) · [✨ Features](#-features) · [🧠 Agent Architecture](#-agent-architecture) · [🖼 Screenshots](#-screenshots) · [⚙️ Configuration](#%EF%B8%8F-configuration)
-
-</div>
+> ⚠️ 医疗免责声明：本系统输出的会诊意见仅供临床参考，不构成诊断或处方。生产模式下报告均带"未经验证"标注，沙箱演示报告禁止打印/入病案。
 
 ---
 
-## ⚠️ Disclaimer
+## 一、为什么重构（原版致命问题 → 本版修复）
 
-> MedConsult is a **research and demonstration platform**. It is **NOT a medical device**; outputs are references for licensed physicians only, never medical advice or prescriptions. You are responsible for compliance with local healthcare regulations.
+| 原版致命问题 | 后果 | 本版修复 |
+|---|---|---|
+| **零认证 / 零权限**：`server.py` 无任何 auth，患者病历明文 JSON 落盘 | 局域网内任何人可读改患者病历，严重合规风险 | JWT + bcrypt + 角色 RBAC（doctor/chief/admin），未登录一律 401；**所有 PHI 字段（姓名/身份证/电话）Fernet 加密落库**，密钥持久化到 `data/.phi_key`（生产必须显式配置） |
+| **Mock 冒充权威**：无 Key 时默认脚本模式，`_mock_report` 直接吐病例库标准答案，照常渲染正式报告卡+签名栏+可打印 | 医生可能把假报告当真实会诊意见使用 | 沙箱模式强制 `is_demo=True`：报告明确标注"沙箱演示/未生成真实诊断/禁止打印入病案"，前端据此隐藏打印/签名；**生产模式未配置 LLM 直接拒绝发起**（HTTP 400） |
+| **反馈未审核单向污染**：任何 👍/👎 立即写入并自动注入后续会诊 | 一条误点/恶意反馈污染后续全部相似会诊 | 反馈四段状态机：`recorded → pending_review → approved/rejected`；仅 **approved 且未过期**（默认 1 年）才可注入，注入时携带来源/审核人/时间，全程审计留痕 |
+| **"多智能体"实为单模型换提示词**：8 个专科全部调 `moderator_model` | 宣传与实现不符，各专科无独立能力配置 | 专科/主持人/摘要/追问各自独立模型配置（`LLM_SPECIALIST_MODEL`/`LLM_MODERATOR_MODEL` 可覆盖），结构化 JSON 输出 + 校验重试 |
+| **Prompt Injection**：RAG/参考库/经验库文档内容直接拼进系统提示 | 文档可注入指令劫持会诊 | 所有外部检索内容包成【不可信数据引用】块隔离注入；RAG 相关性阈值 ≥ 2 token 重叠，避免低相关文本污染 |
+| **临床正则误判**：CURB-65 把"尿素氮7天后复查"误判为 BUN>7 | 计算错误进入报告 | 单位感知解析（mmol/L vs mg/dL）+ 物理值护栏（血压 40-300、心率 20-250…）；工具计算结果统一标注"未经检验科核实"，且**不再输出治疗建议文本** |
 
-## ✨ Features
+---
 
-**🏥 Built for real hospital workflows**
+## 二、技术栈
 
-- 🚨 **Red-flag triage before anything else** — deterministic critical-sign scanning (ACS / stroke / dissection / hemorrhage / sepsis / acute abdomen…) warns in a banner *before* specialists speak, and flows into the report's emergency section.
-- 📊 **Data-completeness scoring** — 6 structured elements (age/sex, duration, history, medication, exams, vitals) with explicit "missing" hints; shown next to the report confidence so it is *explainable*, not vibes.
-- 🧮 **Deterministic medical calculators & scores** — MAP, BMI, Cockcroft-Gault CrCl, **CHA₂DS₂-VASc**, **Wells (DVT/PE)**, **CURB-65** — auto-detected from the case text, computed locally, auditable in the transcript.
-- 🧾 **Lab reference library (支持库)** — 32+ seeded lab items with ranges & clinical meaning; searchable in the sidebar, editable by the hospital, and **auto-injected into consultations** when the case mentions them.
-- 🖨 **Report printing & archiving** — every report prints with configurable hospital letterhead, timestamp and physician signature/date block; one-click export to standalone HTML for the medical record room.
-- 🔄 **Report follow-up (报告追问)** — after the report, the composer stays live: physicians question the moderator agent with the report + discussion as context. The most natural chart-review interaction.
-- 🧑‍🏫 **Consultation trainer** — practice interviewing an AI patient (`REQUEST TEST` / `DIAGNOSIS READY` protocol), moderator scoring; one-click **AI demo mode** for teaching & product demos.
+```
+后端  FastAPI + SQLAlchemy 2 + SQLite（可切 PostgreSQL）+ JWT/bcrypt + Fernet + OpenAI AsyncOpenAI 兼容层 + pytest
+前端  React 18 + TypeScript + Vite（专业临床工作站风格，非聊天机器人形态）
+LLM   OpenAI 兼容 API 为主（DeepSeek / GLM / Qwen…），Ollama 仅内网兜底
+部署  Docker Compose（backend + frontend[nginx]）
+```
 
-**🧠 Real agent engineering**
+## 三、快速开始（本地开发）
 
-- 🥞 **Layered prompt engineering** — `AI safety baseline → hospital policy (config) → consultation skills → role task`, applied to every MDT agent. Hospitals write their own drug-formulary / pathway rules in plain text.
-- 🧩 **Skills (技能包)** — reusable specialist instruction packs (seeded: 抗凝管理 / 胸痛鉴别 / 儿童用药 / 感染会诊). Select per consultation, grow your department library, manage in ⚙️ settings.
-- 📚 **Context engineering** — case summary + retrieved document chunks + lab references + past feedback are assembled per agent with budgets; round-2 debaters always see the case (yes, this was a real bug we fixed).
-- 🌱 **Closed-loop learning** — physicians mark reports 👍 helpful / 👎 needs-correction (with corrections); feedback persists locally and similar future consultations auto-inject "本院既往经验" as reference-only context.
-- 🤖 **True multi-agent MDT** — triage assistant → per-specialist independent opinions (concurrent) → cross-discussion → moderator consensus report; any OpenAI-compatible model per role.
-
-**🔒 Local-first & safe**
-
-- Everything (documents, sessions, prompts, feedback, config) stays on your machine. Only the LLM provider you configure is called.
-- Zero web framework: server is Python stdlib; frontend is dependency-free vanilla JS. `pip install -r requirements.txt` and go.
-- Upload whitelist, path-traversal hardening, body-size caps, port double-bind protection.
-
-## 🖼 Screenshots
-
-![MDT with triage banner & injected references](docs/images/mdt_triage_banner.png)
-*Consultation workbench: red-flag banner → summary with injected lab references & past hospital experience → specialist opinion → calculator → structured report (completeness 6/6, signature block, 👍/👎 feedback)*
-
-| | |
-|---|---|
-| ![Report details](docs/images/mdt_triage_report.png) | ![Workspace launcher](docs/images/splash.png) |
-| *Report card: confidence + data completeness, calculations, red flags, print/export* | *Launcher: 会诊工作台 / 问诊训练台* |
-| ![Settings](docs/images/settings.png) |
-| *⚙️ Settings: model per role, prompt pool, skills, hospital policy, biases, sandbox* |
-
-## 🚀 Quick Start
+### 后端
 
 ```bash
-git clone https://github.com/Morningstar202604/medconsult.git
-cd medconsult
-
-python -m venv .venv
-# Windows
-.venv\Scripts\python -m pip install -r requirements.txt
-.venv\Scripts\python server.py
-# Linux / macOS
+cd backend
 python3 -m venv .venv && .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python server.py
+cp .env.example .env        # 按需修改（默认可跑沙箱）
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open **http://127.0.0.1:8765** — or double-click `start_web.bat` on Windows.
-Without any API key the platform runs in **scripted demo mode**; the built-in English research case library (MedQA / NEJM, 456 cases) works as training material.
+首次启动自动建库、播种技能包/检验参考值，并创建种子管理员（默认 `admin / ChangeMe123!`，**上线前必须改**）。
 
-### Configure an LLM (30 seconds)
+### 前端
 
-Option A — server-wide defaults in `config.json` (see `config.json.example`, gitignored):
-
-```json
-{
-  "api_key": "sk-...",
-  "base_url": "https://api.deepseek.com/v1",
-  "model": "deepseek-chat",
-  "hospital_name": "XX医院",
-  "hospital_policy": "本院规范：抗凝药物仅限目录内品种；出院带药不超过14天。"
-}
+```bash
+cd frontend
+npm install
+npm run dev                 # http://localhost:5173 （/api 已代理到 8000）
 ```
 
-Works with **OpenAI / DeepSeek / GLM (open.bigmodel.cn/api/paas/v4) / Qwen / Ollama** — any OpenAI-compatible endpoint, including local models.
-Option B — in-app: **⚙️ Settings → 真实大模型**, paste your key, 🔌 Test Connection. Keys live in your browser's localStorage; they never leave the machine.
+### 跑测试
 
-## 🧠 Agent Architecture
-
-```
-┌────────────────────────────────────────────────────────┐
-│ Prompt layering (every MDT agent)                      │
-│  1. AI safety baseline   — no fabrication, physician-  │
-│     in-command, reference-only output                  │
-│  2. Hospital policy      — your formulary / pathway    │
-│  3. Consultation skills  — anticoag / chest-pain /     │
-│     peds-dosing / infection (editable library)         │
-│  4. Role task            — specialist / moderator      │
-├────────────────────────────────────────────────────────┤
-│ Context assembly per agent:                            │
-│  case summary · RAG chunks · lab references ·          │
-│  past feedback (similar cases) · calculator results    │
-├────────────────────────────────────────────────────────┤
-│ Pipeline: triage → summary → specialist opinions ×N    │
-│  (concurrent) → cross discussion → consensus report →  │
-│  physician follow-up Q&A → feedback → experience base  │
-└────────────────────────────────────────────────────────┘
+```bash
+cd backend
+.venv/bin/python -m pytest tests/ -v
 ```
 
-## ⚙️ Configuration
+覆盖：红旗分级、CURB-65 单位感知、计算器 unverified 标注、PHI 落库密文、沙箱/生产隔离、反馈审核权限、401 拦截等。
 
-| Key | Purpose |
+---
+
+## 四、LLM 接入（以 API 为主）
+
+在 `backend/.env` 配置：
+
+```ini
+LLM_API_KEY=sk-xxx
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4   # GLM 示例；DeepSeek/Qwen 改对应 base_url
+LLM_DEFAULT_MODEL=glm-4.5-air
+# 可选：按角色覆盖模型
+# LLM_SPECIALIST_MODEL=deepseek-chat
+# LLM_MODERATOR_MODEL=glm-4.5-air
+```
+
+- **OpenAI 兼容**：任意实现 `/chat/completions` 的厂商（GLM / DeepSeek / Qwen / Moonshot / 中转网关）均可。
+- **Ollama 兜底**：`base_url=http://127.0.0.1:11434/v1`，系统自动识别为 Ollama。
+- **未配置 LLM**：生产模式会诊被拒绝（400），仅沙箱演示可用——杜绝"假报告冒充真会诊"。
+
+## 五、安全模型
+
+| 层 | 实现 |
 |---|---|
-| `api_key` / `base_url` / `model` | LLM endpoint (OpenAI-compatible, incl. Ollama) |
-| `hospital_name` | Letterhead on printed reports |
-| `hospital_policy` | Hospital-specific rules injected into every agent |
-| `report_footer` | Footer note on printed reports |
+| 认证 | JWT（Access Token 过期策略可配），密码 bcrypt 哈希 |
+| 授权 | 角色：`doctor`（提交/查看/反馈）、`chief`（反馈审核）、`admin`（用户管理/知识库写/审计） |
+| 数据 | PHI 字段 Fernet 加密落库；SQLite 文件权限 600 |
+| 审计 | 登录/建档/会诊/反馈审核/用户管理等关键操作写入 `AuditLog` |
+| 注入防护 | 检索内容【不可信数据引用】隔离 + RAG 相关性阈值 |
+| 生产护栏 | 生产模式必须配置 LLM；沙箱报告强制 demo 标注 |
 
-Env overrides: `MEDCONSULT_API_KEY` / `MEDCONSULT_BASE_URL` / `MEDCONSULT_MODEL` / `MEDCONSULT_HOST` / `MEDCONSULT_PORT`.
+## 六、Docker 部署
 
-## 📚 Documentation
+> ⚠️ 本机无 Docker 环境，`docker-compose.yml` 为**未实测模板**，部署前请按环境核对。
 
-- [简体中文说明](README.zh-CN.md) · [CHANGELOG](CHANGELOG.md) · [CONTRIBUTING](CONTRIBUTING.md) · [SECURITY](SECURITY.md)
-- Upstream research baseline: [AgentClinic](https://github.com/SamuelSchmidgall/AgentClinic) (MIT) — the trainer/verdict protocol mirrors its benchmark.
+```bash
+docker compose up -d --build
+# 前端 http://<host>:8080
+```
 
-## License
+生产必须设置：`SECRET_KEY`（≥32 字节）、`PHI_ENCRYPTION_KEY`（Fernet key）、`LLM_API_KEY`。
 
-MIT © MedConsult Contributors. Medical disclaimer above applies.
+```bash
+# 生成 PHI 密钥
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+## 七、核心 API（前缀 `/api`）
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/auth/login` `/auth/register` | 登录 / 建号（仅管理员） |
+| GET/POST | `/patients` `/patients/{id}/encounters` | 患者/就诊（PHI 加密） |
+| POST | `/consultations` | 发起会诊（mode=production/sandbox；可选 specialties/skills/docs/encounter） |
+| GET | `/consultations/{id}` | 会诊详情（红旗→摘要→专科两轮→主持人报告→追问） |
+| POST | `/consultations/{id}/followup` | 报告追问 |
+| POST | `/feedback` `/feedback/{id}/review` | 提交反馈 / 主任审核 |
+| GET/POST | `/library/upload` `/skills` `/reference` | 文档库 / 技能包 / 检验参考值 |
+| GET | `/users` `/audit` | 用户管理 / 审计日志（仅管理员） |
+
+## 八、目录结构
+
+```
+medconsult-pro/
+├── backend/
+│   ├── app/
+│   │   ├── main.py            # FastAPI 入口 + 种子
+│   │   ├── config.py          # Settings（env 驱动）
+│   │   ├── security.py        # 密码/JWT/PHI 加密
+│   │   ├── deps.py            # 当前用户/RBAC/审计
+│   │   ├── models.py          # ORM（PHI 加密字段）
+│   │   ├── schemas.py
+│   │   ├── clinical/          # 红旗/完备度/计算器（单位感知）
+│   │   ├── llm/               # 客户端/多角色提示词/结构化校验
+│   │   ├── rag/               # 分块检索（相关性阈值）
+│   │   ├── services/          # MDT 流水线/反馈审核
+│   │   └── routers/           # auth/patients/consultations/feedback/knowledge/library/admin
+│   ├── tests/                 # 21 项测试
+│   └── requirements.txt
+├── frontend/                  # React+TS 工作站前端
+└── docker-compose.yml
+```
+
+## 垂直临床 Agent 差异化能力（v2）
+
+medconsult-pro 不是"通用 Agent 换皮"，从对话到工具到印证共三层差异化，全部可审计、可回放：
+
+### 1. 对话层：采集式问诊（`app/clinical/intake.py`）
+- 7 类主诉自动分类（胸痛/腹痛/头痛/发热/咳嗽/外伤/其他），每类一套定向问诊协议；
+- **每个问题都带"为什么问"**（鉴别诊断理由，如"性质是区分心绞痛、心包炎、主动脉夹层的关键线索"）；
+- 每轮回答实时红旗扫描（拼接主诉+历史+本轮，杜绝逐轮片段漏检；含否定语境剥离，避免"无放射/无出汗"误报），命中即中断常规采集转急诊路径；
+- 采集完成后自动落成 SOAP 五段结构化病历，可一键发起会诊。
+
+### 2. 工具层：可审计临床工具协议（`app/services/toolbox.py`）
+- 统一协议：`run_triage / run_calculator / run_evidence_search / run_exam_check / run_drug_check`；
+- 每个工具调用都写 `ToolCallLog`（入参/出参/置信度/依据），会诊详情可见工具审计面板；
+- 检查合理性（`exam_appropriateness.py`）：按主诉给检查建议+优先级+理由；
+- 药物相互作用（`drug_interactions.py`）：逻辑药物组+中英别名，输出严重度/建议/依据。
+
+### 3. 印证层：证据链 + 分歧显性化 + 患者版
+- **证据链**：红旗/计算器/检查/药物/RAG/主持人全部入 `EvidenceItem`（claim/来源/置信度/局限）；
+- **分歧显性化**：`compute_disagreements` 确定性检测专科意见立场冲突，报告附 dispute_detail；
+- **缺检查降置信度**：`_confidence_with_completeness` 关键信息缺失自动降级；
+- **患者版双视角报告**（`patient_report.py`）：专业版/通俗版一键切换（一句话结论/行动清单/就医警示/就诊提问）。
+
+### 多模态工具层（OCR/ASR/TTS）
+- **无多模态模型也能用**：未配置 API 时自动用本地工具兜底——OCR=`rapidocr-onnxruntime`，ASR=`faster-whisper`，TTS=`edge-tts`；
+- **用户自填 provider**：`OCR_API_URL`（OpenAI 兼容 vision）、`ASR_API_URL`（/audio/transcriptions）、`TTS_API_URL`（/audio/speech），填了就走 API；
+- 全部走 `toolbox` 统一协议（`run_ocr`/`run_asr`），每次调用写 `ToolCallLog` 审计，识别结果存 `MediaAsset` 表，可一键填入会诊描述或问诊回答；
+- 前端会诊工作台内置「上传图片 OCR / 上传音频转写」面板，结果展示 + 置信度 + 引擎来源。
+
+### 部署说明
+- API 优先：`LLM_BASE_URL`（OpenAI 兼容，如 DeepSeek/GLM/Qwen，注意 base_url 需含 `/v1`）+ `LLM_API_KEY`；
+- 内网兜底：Ollama（base_url 指向本地，api_key 留空）；
+- 循证检索：`EVIDENCE_PROVIDER` 配置真实循证源；未配置时用内部 RAG 兜底；
+- 沙箱模式无需 LLM，报告强制 `is_demo`（禁止打印入病案）。

@@ -1,7 +1,0 @@
-# 研究脚本 agentclinic.py / generate_cases 所需（Web 平台运行不需要）
-# 安装：pip install -r requirements-research.txt
-anthropic
-replicate
-transformers
-datasets
-regex>=2026.7.19    # 旧版 2023.12.25 在 Python 3.13 上无法构建
