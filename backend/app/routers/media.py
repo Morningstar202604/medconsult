@@ -67,11 +67,12 @@ def _asset_to_dict(a: models.MediaAsset) -> dict:
 
 @router.post("/media/ocr")
 def ocr_upload(
+    request: Request,
+    db: DbDep,
+    user: CurrentUser,
     file: UploadFile = File(...),
     consultation_id: int | None = Form(None),
     intake_session_id: int | None = Form(None),
-    db: Session = Depends(DbDep),
-    user: models.User = Depends(CurrentUser),
 ):
     """上传图片 → OCR 识别文字（检查报告/处方/化验单）。"""
     stored, size = _save_upload(file, "image")
@@ -98,11 +99,11 @@ def ocr_upload(
 @router.post("/media/asr")
 def asr_upload(
     request: Request,
+    db: DbDep,
+    user: CurrentUser,
     file: UploadFile = File(...),
     consultation_id: int | None = Form(None),
     intake_session_id: int | None = Form(None),
-    db: Session = Depends(DbDep),
-    user: models.User = Depends(CurrentUser),
 ):
     """上传音频 → ASR 转写文字（口述问诊/录音会诊）。"""
     stored, size = _save_upload(file, "audio")
@@ -125,7 +126,7 @@ def asr_upload(
 
 
 @router.get("/media")
-def list_media(db: Session = Depends(DbDep), user: models.User = Depends(CurrentUser),
+def list_media(db: DbDep, user: CurrentUser,
                kind: str | None = None, limit: int = 50, offset: int = 0):
     q = db.query(models.MediaAsset).filter(models.MediaAsset.user_id == user.id)
     if kind:
@@ -136,8 +137,8 @@ def list_media(db: Session = Depends(DbDep), user: models.User = Depends(Current
 
 
 @router.get("/media/{asset_id}")
-def get_media(asset_id: int, db: Session = Depends(DbDep),
-              user: models.User = Depends(CurrentUser)):
+def get_media(asset_id: int, db: DbDep,
+              user: CurrentUser):
     a = db.get(models.MediaAsset, asset_id)
     if a is None or (a.user_id != user.id and user.role != models.Role.ADMIN):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "媒体资源不存在")
@@ -145,8 +146,8 @@ def get_media(asset_id: int, db: Session = Depends(DbDep),
 
 
 @router.get("/media/{asset_id}/download")
-def download_media(asset_id: int, db: Session = Depends(DbDep),
-                   user: models.User = Depends(CurrentUser)):
+def download_media(asset_id: int, db: DbDep,
+                   user: CurrentUser):
     a = db.get(models.MediaAsset, asset_id)
     if a is None or (a.user_id != user.id and user.role != models.Role.ADMIN):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "媒体资源不存在")
