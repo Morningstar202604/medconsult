@@ -21,8 +21,16 @@ MAX_BYTES = 32 * 1024 * 1024
 
 def _doc_dir() -> Path:
     s = get_settings()
-    base = Path(s.database_url.replace("sqlite:///", "./"))
-    d = (base.parent if s.database_url.startswith("sqlite") else Path("./data")) / "documents"
+    if s.database_url.startswith("sqlite"):
+        # sqlite:////abs/path → absolute; sqlite:///rel/path → project-relative.
+        # A naive .replace("sqlite:///", "./") mangles absolute Windows paths
+        # ("./D:/...") into invalid ones.
+        p = Path(s.database_url.split("sqlite:///", 1)[-1])
+        base = p if p.is_absolute() else Path(".") / p
+        d = base.parent
+    else:
+        d = Path("./data")
+    d = d / "documents"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
