@@ -1,7 +1,0 @@
-# 汇诊平台 Web 运行最小依赖（server.py + app/*）
-# 注：旧版 regex==2023.12.25 / argparse 等已移除——前者在 Python 3.13 无
-# 预编译包且 Web 端不使用，后者属标准库不应列在 requirements。
-# agentclinic.py 等研究脚本依赖见 requirements-research.txt。
-openai>=3.5.0,<4
-pypdf>=6.16.2          # 文档库 PDF 文本提取（README 宣称支持但依赖原先缺失）
-python-docx>=1.2.0    # 文档库 DOCX 文本提取（同上）
