@@ -11,6 +11,7 @@ backend/.phi_key
 node_modules/
 frontend/dist/
 frontend/.vite/
+*.tsbuildinfo
 
 # --- 系统 ---
 .DS_Store

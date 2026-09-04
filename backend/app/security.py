@@ -91,3 +91,23 @@ def phi_decrypt(token: str | None) -> str | None:
         return f.decrypt(token.encode("utf-8")).decode("utf-8")
     except InvalidToken:
         return "[解密失败：数据损坏或密钥变更]"
+
+
+# ---------------------------------------------------------------- 密码强度策略
+import re as _re
+
+
+def validate_password_strength(password: str, min_length: int = 10) -> tuple[bool, str]:
+    """返回 (是否通过, 原因)。强密码：长度 + 大小写 + 数字 + 特殊符号。"""
+    if len(password) < min_length:
+        return False, f"密码长度至少 {min_length} 位"
+    checks = [
+        (r"[a-z]", "需包含小写字母"),
+        (r"[A-Z]", "需包含大写字母"),
+        (r"\d", "需包含数字"),
+        (r"[^A-Za-z0-9]", "需包含特殊符号"),
+    ]
+    for pattern, msg in checks:
+        if not _re.search(pattern, password):
+            return False, msg
+    return True, ""

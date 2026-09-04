@@ -29,6 +29,7 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(String(128))
     full_name: Mapped[str] = mapped_column(String(64), default="")
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.DOCTOR)
+    hospital: Mapped[str] = mapped_column(String(64), default="")  # 所属医疗机构（多机构/多租户维度，空=单机构）
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
@@ -107,6 +108,42 @@ class ConsultationMode(str, enum.Enum):
     SANDBOX = "sandbox"
 
 
+class ConsultationStatus(str, enum.Enum):
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class ConsultationRole(str, enum.Enum):
+    TRIAGE = "triage"
+    SUMMARY = "summary"
+    SPECIALIST = "specialist"
+    MODERATOR = "moderator"
+    TOOL = "tool"
+    REPORT = "report"
+    DISPUTE = "dispute"
+    INTAKE = "intake"
+
+
+class IntakeStatus(str, enum.Enum):
+    COLLECTING = "collecting"
+    REDFLAG = "redflag"
+    COMPLETE = "complete"
+
+
+class EvidenceBasisType(str, enum.Enum):
+    RULE = "rule"
+    CALCULATOR = "calculator"
+    RAG = "rag"
+    SPECIALIST = "specialist"
+    MODERATOR = "moderator"
+    FEEDBACK = "feedback"
+    EXAM = "exam"
+    DRUG = "drug"
+    GUIDELINE = "guideline"
+    LITERATURE = "literature"   # 实时循证检索（PubMed 等外部证据源）
+
+
 class Consultation(Base):
     __tablename__ = "consultations"
 
@@ -114,7 +151,7 @@ class Consultation(Base):
     encounter_id: Mapped[int | None] = mapped_column(ForeignKey("encounters.id"), nullable=True)
     mode: Mapped[ConsultationMode] = mapped_column(Enum(ConsultationMode), default=ConsultationMode.PRODUCTION)
     title: Mapped[str] = mapped_column(String(120), default="未命名会诊")
-    status: Mapped[str] = mapped_column(String(24), default="running")  # running|completed|failed
+    status: Mapped[ConsultationStatus] = mapped_column(Enum(ConsultationStatus), default=ConsultationStatus.RUNNING)  # running|completed|failed
     specialties_json: Mapped[str] = mapped_column(Text, default="[]")
     report_enc: Mapped[str | None] = mapped_column(Text, nullable=True)
     report_json: Mapped[str | None] = mapped_column(Text, nullable=True)  # 非敏感报告字段（明文 JSON）
@@ -127,6 +164,10 @@ class Consultation(Base):
     encounter: Mapped["Encounter | None"] = relationship(back_populates="consultations")
     events: Mapped[list["ConsultationEvent"]] = relationship(
         back_populates="consultation", cascade="all, delete-orphan", order_by="ConsultationEvent.id")
+    evidence_items: Mapped[list["EvidenceItem"]] = relationship(
+        back_populates="consultation", cascade="all, delete-orphan", order_by="EvidenceItem.id")
+    tool_call_logs: Mapped[list["ToolCallLog"]] = relationship(
+        back_populates="consultation", cascade="all, delete-orphan", order_by="ToolCallLog.id")
 
     def set_report(self, report: dict) -> None:
         import json
@@ -154,7 +195,7 @@ class ConsultationEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     consultation_id: Mapped[int] = mapped_column(ForeignKey("consultations.id"), index=True)
-    role: Mapped[str] = mapped_column(String(24))     # triage|summary|specialist|moderator|tool|report
+    role: Mapped[ConsultationRole] = mapped_column(Enum(ConsultationRole))
     name: Mapped[str] = mapped_column(String(64), default="")
     emoji: Mapped[str] = mapped_column(String(8), default="")
     round: Mapped[int] = mapped_column(Integer, default=0)
@@ -243,7 +284,7 @@ class IntakeSession(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"))
     chief_complaint: Mapped[str] = mapped_column(String(300), default="")
     category: Mapped[str] = mapped_column(String(32), default="other")
-    status: Mapped[str] = mapped_column(String(24), default="collecting")  # collecting|redflag|complete
+    status: Mapped[IntakeStatus] = mapped_column(Enum(IntakeStatus), default=IntakeStatus.COLLECTING)  # collecting|redflag|complete
     fields_json: Mapped[str] = mapped_column(Text, default="{}")   # SOAP 结构化字段
     answers_json: Mapped[str] = mapped_column(Text, default="[]")   # 对话轮次 [{q,a,reason,field}]
     pending_json: Mapped[str] = mapped_column(Text, default="[]")   # 待追问问题
@@ -253,18 +294,19 @@ class IntakeSession(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
 class EvidenceItem(Base):
-    """证据链：会诊中每个诊断/建议的「依据 + 来源 + 置信度 + 限制」。
-    basis_type: guideline|rag|calculator|specialist|moderator|feedback|rule|exam|drug
-    """
+    """证据链：会诊中每个诊断/建议的「依据 + 来源 + 置信度 + 限制」。"""
     __tablename__ = "evidence_items"
     id: Mapped[int] = mapped_column(primary_key=True)
     consultation_id: Mapped[int] = mapped_column(ForeignKey("consultations.id"), index=True)
     claim: Mapped[str] = mapped_column(Text)
-    basis_type: Mapped[str] = mapped_column(String(24), default="rule")
+    basis_type: Mapped[EvidenceBasisType] = mapped_column(Enum(EvidenceBasisType), default=EvidenceBasisType.RULE)
     source: Mapped[str] = mapped_column(String(300), default="")
     confidence: Mapped[str] = mapped_column(String(12), default="中")
     limitation: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    consultation: Mapped["Consultation"] = relationship(back_populates="evidence_items")
+
+
 class ToolCallLog(Base):
     """临床工具调用审计：每个工具调用（计算器/红旗/检查合理性/药物互作/循证检索）
     的输入、输出、置信度与审计备注全部留痕。
@@ -278,6 +320,7 @@ class ToolCallLog(Base):
     confidence: Mapped[str] = mapped_column(String(12), default="中")
     note: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    consultation: Mapped["Consultation | None"] = relationship(back_populates="tool_call_logs")
 
 
 class MediaAsset(Base):

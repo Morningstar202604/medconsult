@@ -217,6 +217,18 @@ def _calc_wells(text: str) -> list[CalcResult]:
     return out
 
 
+def get_calculator_catalog() -> list[dict]:
+    """内置医学计算器清单（供系统规则公示/前端显示）。"""
+    return [
+        {"name": "平均动脉压 MAP", "desc": "根据收缩压/舒张压计算 MAP"},
+        {"name": "体质指数 BMI", "desc": "体重(kg) / 身高(m)² 分级"},
+        {"name": "肌酐清除率 CrCl (Cockcroft-Gault)", "desc": "按年龄/体重/肌酐估算肾功能"},
+        {"name": "CHA₂DS₂-VASc 血栓风险评分", "desc": "房颤卒中风险分层"},
+        {"name": "CURB-65 肺炎严重度评分", "desc": "社区获得性肺炎住院决策"},
+        {"name": "Wells 评分（DVT/PE 临床可能性）", "desc": "深静脉血栓/肺栓塞风险"},
+    ]
+
+
 def detect_and_run(text: str) -> list[CalcResult]:
     """依次运行各计算器并去重。"""
     results: list[CalcResult] = []

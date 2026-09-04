@@ -1,4 +1,4 @@
-# MedConsult Pro 前端镜像（构建产物 + nginx 反代后端）
+# 汇诊前端镜像（构建产物 + nginx 反代后端）
 FROM node:22-alpine AS build
 WORKDIR /app
 COPY frontend/package.json frontend/package-lock.json* /app/

@@ -7,10 +7,10 @@ from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 
 from .. import models
-from ..config import get_settings
 from ..deps import DbDep
 from ..deps import CurrentUser
 from ..rag import index_doc, remove_doc
+from ..shared import storage_dir
 
 router = APIRouter(tags=["library"])
 
@@ -20,19 +20,7 @@ MAX_BYTES = 32 * 1024 * 1024
 
 
 def _doc_dir() -> Path:
-    s = get_settings()
-    if s.database_url.startswith("sqlite"):
-        # sqlite:////abs/path → absolute; sqlite:///rel/path → project-relative.
-        # A naive .replace("sqlite:///", "./") mangles absolute Windows paths
-        # ("./D:/...") into invalid ones.
-        p = Path(s.database_url.split("sqlite:///", 1)[-1])
-        base = p if p.is_absolute() else Path(".") / p
-        d = base.parent
-    else:
-        d = Path("./data")
-    d = d / "documents"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+    return storage_dir("documents")
 
 
 def _extract_text(path: Path, ext: str) -> str:
@@ -101,6 +89,9 @@ def list_docs(db: DbDep, user: CurrentUser):
 
 @router.delete("/library/{doc_id}")
 def delete_doc(doc_id: int, db: DbDep, user: CurrentUser):
+    # 文档库为全院共享知识资产：仅主任/管理员可删除，防止普通医生误删知识库
+    if user.role not in (models.Role.ADMIN, models.Role.CHIEF):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "仅主任/管理员可删除知识库文档")
     doc = db.get(models.Document, doc_id)
     if doc is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "文档不存在")

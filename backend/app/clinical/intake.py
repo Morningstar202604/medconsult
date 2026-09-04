@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass, field, asdict
 from typing import Optional
 
+from ..models import IntakeStatus
+
 # ---------------------------------------------------------------- 主诉分类
 CHEST_PAIN = "chest_pain"
 ABDOMINAL = "abdominal"
@@ -197,7 +199,7 @@ class IntakeState:
     fields: dict[str, str] = field(default_factory=dict)   # 已采集字段
     answers: list[dict] = field(default_factory=list)      # 对话记录 [{q, a, reason}]
     protocol: list[dict] = field(default_factory=list)     # 协议问题快照
-    status: str = "collecting"                             # collecting|redflag|complete
+    status: IntakeStatus = IntakeStatus.COLLECTING                       # collecting|redflag|complete
     red_flags: list[dict] = field(default_factory=list)
     flags_urgent: bool = False
     # 每次回答命中的红旗会优先返回（即使协议未走完）
@@ -274,7 +276,7 @@ def apply_answer(state: IntakeState, answer: str) -> dict:
         state.red_flags = [{"severity": h.severity, "message": h.message, "matched": h.matched}
                            for h in hits]
         state.flags_urgent = any(h.severity == "emergent" for h in hits)
-        state.status = "redflag"
+        state.status = IntakeStatus.REDFLAG
         top = state.red_flags[0]
         reply = (
             "⚠️ 您刚才的描述出现了需要立即处理的征象，请不要再继续线上问诊流程。\n"
@@ -299,11 +301,11 @@ def apply_answer(state: IntakeState, answer: str) -> dict:
             return {"reply": None, "interrupt": False, "red_flags": [],
                     "next_question": nxt, "done": False}
         # 协议走完
-        state.status = "complete"
+        state.status = IntakeStatus.COMPLETE
         return {"reply": None, "interrupt": False, "red_flags": [],
                 "next_question": None, "done": True}
     # 无待问问题：完成
-    state.status = "complete"
+    state.status = IntakeStatus.COMPLETE
     return {"reply": None, "interrupt": False, "red_flags": [],
             "next_question": None, "done": True}
 
@@ -371,7 +373,7 @@ def build_record(state: IntakeState) -> dict:
 # ---------------------------------------------------------------- 序列化辅助
 def state_from_json(chief_complaint: str, category: str, fields: dict,
                     answers: list[dict], protocol: list[dict],
-                    status: str, red_flags: list[dict], flags_urgent: bool,
+                    status: IntakeStatus, red_flags: list[dict], flags_urgent: bool,
                     initial_flags: list[dict] | None = None,
                     reported: list[str] | None = None) -> IntakeState:
     st = IntakeState(
@@ -380,7 +382,7 @@ def state_from_json(chief_complaint: str, category: str, fields: dict,
         fields=fields or {},
         answers=answers or [],
         protocol=protocol or [],
-        status=status or "collecting",
+        status=status or IntakeStatus.COLLECTING,
         red_flags=red_flags or [],
         flags_urgent=flags_urgent or False,
         initial_flags=initial_flags or [],

@@ -8,6 +8,7 @@ import uuid
 from dataclasses import dataclass
 
 from ..config import get_settings
+from ..shared import OLLAMA_DEFAULT_PORT
 
 _THINK_RE = re.compile(r"<think>.*?</think>|<reasoning>.*?</reasoning>", re.S)
 
@@ -23,7 +24,7 @@ class LLMConfig:
 
     @property
     def is_ollama(self) -> bool:
-        return "11434" in (self.base_url or "") or "ollama" in (self.base_url or "").lower()
+        return OLLAMA_DEFAULT_PORT in (self.base_url or "") or "ollama" in (self.base_url or "").lower()
 
     @property
     def configured(self) -> bool:

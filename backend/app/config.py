@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # 服务
-    app_name: str = "MedConsult Pro · 汇诊"
+    app_name: str = "汇诊"
     api_prefix: str = "/api"
     debug: bool = False
 
@@ -38,6 +38,8 @@ class Settings(BaseSettings):
     llm_specialist_model: str = ""
     # 循证检索：真实外部循证源 provider（如 UpToDate/指南库 API），未配置时内部 RAG 兜底
     evidence_provider: str = ""
+    evidence_api_key: str = ""
+    evidence_max_results: int = 5
     # ---- 多模态工具层（无多模态模型时用工具兜底识别）----
     # OCR：识别检查报告/处方/化验单图片文字。优先 OCR_API（OpenAI 兼容或通用 OCR 服务），
     # 未配置时自动用本地 rapidocr-onnxruntime（需 pip install rapidocr-onnxruntime）。
@@ -52,8 +54,10 @@ class Settings(BaseSettings):
     tts_api_url: str = ""
     tts_api_key: str = ""
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
-    # 媒体文件存储目录（相对 backend/）
-    media_storage_dir: str = "data/media"
+    # 媒体文件存储目录（相对数据库所在目录；如 backend/data/media）
+    media_storage_dir: str = "media"
+    # 文档存储目录（相对数据库所在目录；如 backend/data/documents）
+    documents_dir: str = "documents"
 
     # 允许未知字段，便于复用
     # hospital
@@ -66,6 +70,20 @@ class Settings(BaseSettings):
     # 初始化管理员（首次启动种子）
     seed_admin_username: str = "admin"
     seed_admin_password: str = "ChangeMe123!"
+
+    # ---- 企业交付硬化 ----
+    # 全局 API：单 IP 每分钟最大请求数（0 = 关闭）
+    api_rate_limit_per_minute: int = 300
+    # 登录端点：单 IP+用户名 每分钟最大尝试数（防爆破）
+    login_rate_limit_per_minute: int = 10
+    # 登录失败锁定：窗口内失败阈值与锁定秒数
+    login_fail_threshold: int = 5
+    login_lock_seconds: int = 900
+    # 密码策略
+    password_min_length: int = 10
+    # 反向代理：部署在 nginx/网关后置为 true，此时才信任 X-Forwarded-For（限流/审计取真实客户端 IP）。
+    # 置为 false（默认）时以直连 socket 地址为准，防止伪造头绕过限流。
+    behind_proxy: bool = False
 
     @property
     def specialist_model(self) -> str:

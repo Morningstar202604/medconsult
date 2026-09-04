@@ -7,6 +7,9 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{tempfile.mkdtemp()}/test.db")
 os.environ.setdefault("SEED_ADMIN_USERNAME", "admin")
 os.environ.setdefault("SEED_ADMIN_PASSWORD", "TestPass123!")
 os.environ.setdefault("ALLOW_SANDBOX_WITHOUT_LLM", "true")
+# 测试环境放宽限流阈值，避免大量会话登录/请求被 429 中断
+os.environ.setdefault("LOGIN_RATE_LIMIT_PER_MINUTE", "100000")
+os.environ.setdefault("API_RATE_LIMIT_PER_MINUTE", "1000000")
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +17,8 @@ from fastapi.testclient import TestClient
 
 @pytest.fixture(scope="session")
 def client():
+    from app.db import init_db
+    init_db()
     from app.main import app
     with TestClient(app) as c:
         yield c

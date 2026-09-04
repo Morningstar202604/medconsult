@@ -37,6 +37,52 @@ export interface Encounter {
   vitals: string;
 }
 
+// ---------------------------------------------------------------- 枚举类型别名
+export type ConsultMode = "production" | "sandbox";
+export type ConsultStatus = "running" | "completed" | "failed";
+export type SpecialtyKey = "internal" | "surgery" | "pharmacy" | "labimaging" | "neurology" | "cardio" | "pediatrics" | "obgyn";
+export type EvidenceBasisType = "guideline" | "rag" | "calculator" | "specialist" | "moderator" | "feedback" | "rule" | "exam" | "drug" | "literature";
+export type ConsultationRole = "triage" | "summary" | "specialist" | "moderator" | "tool" | "report" | "dispute" | "intake";
+export type IntakeSessionStatus = "collecting" | "redflag" | "complete";
+export type AgentIntent = "consult" | "intake" | "calculator" | "drug" | "knowledge" | "literature";
+
+export interface IntentDecision {
+  intent: AgentIntent;
+  label: string;
+  confidence: number;
+  reason: string;
+  matched: string;
+}
+
+export interface EvidenceHit {
+  title: string;
+  source: string;
+  date: string;
+  url: string;
+  snippet: string;
+  level: string;
+}
+
+export interface AgentResponse {
+  intent: IntentDecision;
+  action: string;
+  redirect?: string;
+  data: Record<string, unknown> & {
+    message?: string;
+    items?: { name: string; expr: string; result: string; note: string }[];
+    summary?: string;
+    count?: number;
+    provider?: string;
+    degraded?: boolean;
+    level_labels?: Record<string, string>;
+    results?: EvidenceHit[];
+    references?: { item: string; en: string; unit: string; range: string; note: string }[];
+    status?: string;
+    is_demo?: boolean;
+    [k: string]: unknown;
+  };
+}
+
 export interface ConsultationItem {
   id: number;
   title: string;
@@ -108,7 +154,7 @@ export interface FeedbackItem {
 export interface EvidenceItem {
   id: number;
   claim: string;
-  basis_type: string;
+  basis_type: EvidenceBasisType;
   source: string;
   confidence: string;
   limitation: string;
@@ -137,7 +183,7 @@ export interface IntakeAnswerResp {
   done: boolean;
   next_question: IntakeQuestion | null;
   progress: { answered: number; total: number };
-  status: string;
+  status: IntakeSessionStatus;
 }
 
 export interface MediaAsset {
