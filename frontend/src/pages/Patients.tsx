@@ -13,6 +13,11 @@ export default function Patients() {
   const [form, setForm] = useState({ name: "", gender: "男", birth_date: "", id_card: "", phone: "", hospital_no: "" });
   const [encForm, setEncForm] = useState({ visit_no: "", chief_complaint: "", history: "", meds: "", exams: "", vitals: "" });
 
+  function maskPhone(phone: string): string {
+    if (!phone || phone.length < 7) return phone || "—";
+    return phone.slice(0, 3) + "****" + phone.slice(-4);
+  }
+
   const load = useCallback(async () => {
     try {
       const d = await api.get<{ items: Patient[] }>("/api/patients" + (q ? `?q=${encodeURIComponent(q)}` : ""));
@@ -99,7 +104,7 @@ export default function Patients() {
             {items.map((p) => (
               <tr key={p.id} style={{ cursor: "pointer" }} onClick={() => openPatient(p.id)}>
                 <td>{p.id}</td><td>{p.name}</td><td>{p.gender}</td><td>{p.birth_date}</td>
-                <td>{p.hospital_no}</td><td className="muted">{p.phone}</td>
+                <td>{p.hospital_no}</td><td className="muted">{p.phone ? maskPhone(p.phone) : "—"}</td>
               </tr>
             ))}
             {items.length === 0 && <tr><td colSpan={6} className="empty">暂无患者</td></tr>}

@@ -17,6 +17,7 @@ from .. import models
 from ..config import get_settings
 from ..deps import CurrentUser, DbDep, client_ip, write_audit
 from ..services import toolbox
+from ..shared import storage_dir
 
 router = APIRouter(tags=["media"])
 
@@ -26,12 +27,7 @@ _MAX_SIZE = 50 * 1024 * 1024  # 50MB
 
 
 def _storage_dir() -> Path:
-    settings = get_settings()
-    p = Path(settings.media_storage_dir)
-    if not p.is_absolute():
-        p = Path(__file__).resolve().parent.parent / p
-    p.mkdir(parents=True, exist_ok=True)
-    return p
+    return storage_dir(get_settings().media_storage_dir)
 
 
 def _save_upload(file: UploadFile, kind: str) -> tuple[Path, int]:

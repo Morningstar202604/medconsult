@@ -21,6 +21,8 @@ def submit(body: FeedbackSubmit, db: DbDep, user: CurrentUser):
 
 @router.get("/feedback")
 def list_feedback(db: DbDep, user: CurrentUser, status_filter: str = ""):
+    if user.role == models.Role.DOCTOR:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "仅主任/管理员可查看反馈")
     q = select(models.Feedback).order_by(models.Feedback.id.desc()).limit(200)
     if status_filter:
         try:
@@ -29,6 +31,17 @@ def list_feedback(db: DbDep, user: CurrentUser, status_filter: str = ""):
             pass
     rows = db.scalars(q).all()
     return {"items": [_fb_view(db, f) for f in rows]}
+
+
+@router.get("/feedback/{fid}")
+def get_feedback(fid: int, db: DbDep, user: CurrentUser):
+    """获取单条反馈详情（仅主任/管理员；与列表权限一致）。"""
+    if user.role == models.Role.DOCTOR:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "仅主任/管理员可查看反馈")
+    fb = db.get(models.Feedback, fid)
+    if fb is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "反馈不存在")
+    return _fb_view(db, fb)
 
 
 @router.post("/feedback/{fid}/review")

@@ -1,6 +1,26 @@
-# MedConsult Pro · 汇诊 —— 生产级部署
+# 汇诊 —— 生产级部署
 # 本机无 Docker 环境，以下 compose 配置为未实测模板；部署时请按实际环境核对。
 services:
+  # PostgreSQL（企业版数据库，按需启用：docker compose --profile pg up -d）
+  # 启用后设置 backend 环境变量 DATABASE_URL=postgresql+psycopg://medconsult:medconsult@pg:5432/medconsult
+  pg:
+    image: postgres:16-alpine
+    profiles: ["pg"]
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: medconsult
+      POSTGRES_PASSWORD: medconsult
+      POSTGRES_DB: medconsult
+    volumes:
+      - medconsult_pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U medconsult"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
   backend:
     build:
       context: .
@@ -16,6 +36,12 @@ services:
       LLM_DEFAULT_MODEL: ${LLM_DEFAULT_MODEL:-glm-4.5-air}
       DEBUG: "false"
       ALLOW_SANDBOX_WITHOUT_LLM: "true"
+      # 切换 PostgreSQL：docker compose --profile pg up -d 后取消注释
+      # DATABASE_URL: postgresql+psycopg://medconsult:medconsult@pg:5432/medconsult
+    depends_on:
+      pg:
+        condition: service_healthy
+        required: false
     volumes:
       - medconsult_data:/app/data
     restart: unless-stopped
@@ -38,3 +64,4 @@ services:
 
 volumes:
   medconsult_data:
+  medconsult_pg:

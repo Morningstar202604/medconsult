@@ -38,12 +38,20 @@ def _save_state(db: DbDep, sess: models.IntakeSession, st: intake.IntakeState) -
 def start_intake(body: IntakeStartRequest, db: DbDep, user: CurrentUser, request: Request):
     st = intake.init_state(body.chief_complaint)
     first = intake.first_question(st)
+    # 保存患者基本信息到 fields_json
+    fields = st.fields.copy()
+    if body.patient_name:
+        fields["patient_name"] = body.patient_name
+    if body.patient_age:
+        fields["patient_age"] = body.patient_age
+    if body.patient_gender:
+        fields["patient_gender"] = body.patient_gender
     sess = models.IntakeSession(
         user_id=user.id,
         chief_complaint=st.chief_complaint,
         category=st.category,
         status=st.status,
-        fields_json=json.dumps(st.fields, ensure_ascii=False),
+        fields_json=json.dumps({**st.fields, **fields}, ensure_ascii=False),
         answers_json=json.dumps(st.answers, ensure_ascii=False),
         pending_json=json.dumps(st.protocol, ensure_ascii=False),
     )
@@ -69,7 +77,7 @@ def answer_intake(sid: int, body: IntakeAnswerRequest, db: DbDep, user: CurrentU
         raise HTTPException(status.HTTP_404_NOT_FOUND, "问诊会话不存在")
     if sess.user_id != user.id and user.role != models.Role.ADMIN:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "无权操作该问诊")
-    if sess.status in ("redflag", "complete"):
+    if sess.status in (models.IntakeStatus.REDFLAG, models.IntakeStatus.COMPLETE):
         raise HTTPException(status.HTTP_400_BAD_REQUEST,
                             "该问诊已终止或完成，请新建会话")
     st = _load_state(sess)
@@ -99,6 +107,9 @@ def complete_intake(sid: int, body: IntakeCompleteRequest, db: DbDep, user: Curr
     encounter_id = None
     if body.create_encounter and body.patient_id:
         from ..security import phi_encrypt
+        from .patients import _p_visible
+        if _p_visible(db, body.patient_id, user) is None:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "患者不存在")
         enc = models.Encounter(
             patient_id=body.patient_id,
             visit_no=body.visit_no or "",

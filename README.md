@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.svg" alt="MedConsult Logo" width="200" height="60" /></p>`n`n# MedConsult Pro · 汇诊
+<p align="center"><img src="docs/logo.svg" alt="MedConsult Logo" width="200" height="60" /></p>`n`n# 汇诊
 
 生产级医院多学科 AI 会诊（MDT）平台。基于开源项目 [Morningstar202604/medconsult](https://github.com/Morningstar202604/medconsult) 的深度审查后重构：**消灭了原版全部致命问题**，从"零框架 Demo"升级为**可部署、可审计、可进病案流程**的临床工作站系统。
 
@@ -120,29 +120,32 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 ## 八、目录结构
 
 ```
-medconsult-pro/
+medconsult/
 ├── backend/
 │   ├── app/
-│   │   ├── main.py            # FastAPI 入口 + 种子
-│   │   ├── config.py          # Settings（env 驱动）
-│   │   ├── security.py        # 密码/JWT/PHI 加密
-│   │   ├── deps.py            # 当前用户/RBAC/审计
-│   │   ├── models.py          # ORM（PHI 加密字段）
+│   │   ├── main.py            # FastAPI 入口 + 种子 + 全局限流/指标/追踪中间件
+│   │   ├── config.py          # Settings（env 驱动，企业硬化参数）
+│   │   ├── security.py        # 密码/JWT/PHI 加密/密码策略
+│   │   ├── deps.py            # 当前用户/RBAC/审计/数据隔离（多机构）
+│   │   ├── ops.py             # 限流 / 登录锁定 / Prometheus 指标 / trace_id
+│   │   ├── models.py          # ORM（PHI 加密字段、证据链、工具审计）
 │   │   ├── schemas.py
-│   │   ├── clinical/          # 红旗/完备度/计算器（单位感知）
+│   │   ├── clinical/          # 红旗/完备度/计算器（单位感知）/采集式问诊
+│   │   ├── evidence/          # 循证检索（RAG/外部证据源）
 │   │   ├── llm/               # 客户端/多角色提示词/结构化校验
 │   │   ├── rag/               # 分块检索（相关性阈值）
-│   │   ├── services/          # MDT 流水线/反馈审核
-│   │   └── routers/           # auth/patients/consultations/feedback/knowledge/library/admin
-│   ├── tests/                 # 21 项测试
-│   └── requirements.txt
-├── frontend/                  # React+TS 工作站前端
+│   │   ├── services/          # MDT 流水线/Agnes 规则兜底/意图路由/工具协议
+│   │   └── routers/           # auth/patients/consultations/agent/system/tools/media/…
+│   ├── tests/                 # 91 项测试（pytest）
+│   ├── requirements.txt       # 依赖声明（Docker/CI 使用）
+│   └── requirements.lock      # 精确锁定（可复现环境；生成平台注意）
+├── frontend/                  # React+TS 工作站前端（专业临床工作站风格）
 └── docker-compose.yml
 ```
 
 ## 垂直临床 Agent 差异化能力（v2）
 
-medconsult-pro 不是"通用 Agent 换皮"，从对话到工具到印证共三层差异化，全部可审计、可回放：
+汇诊不是"通用 Agent 换皮"，从对话到工具到印证共三层差异化，全部可审计、可回放：
 
 ### 1. 对话层：采集式问诊（`app/clinical/intake.py`）
 - 7 类主诉自动分类（胸痛/腹痛/头痛/发热/咳嗽/外伤/其他），每类一套定向问诊协议；
@@ -173,4 +176,35 @@ medconsult-pro 不是"通用 Agent 换皮"，从对话到工具到印证共三�
 - 内网兜底：Ollama（base_url 指向本地，api_key 留空）；
 - 循证检索：`EVIDENCE_PROVIDER` 配置真实循证源；未配置时用内部 RAG 兜底；
 - 沙箱模式无需 LLM，报告强制 `is_demo`（禁止打印入病案）。
+
+## 九、企业交付硬化（v1.0）
+
+面向企业/医院交付的运维与合规能力，全部开箱即用：
+
+### 意图识别与统一路由（`services/intent.py`）
+- 发起入口自动识别意图：会诊 / 采集式问诊 / 医学计算 / 用药核查 / 文献检索 / 知识问答；
+- 会诊与问诊走统一 `/agent` 入口，按意图分发到不同流水线。
+
+### 规则可公示（监管透明度）
+- `GET /api/agent/rules` 一次返回：安全基线提示词、红旗规则（按严重度统计+示例）、药物相互作用规则（按严重度计数）、循证证据分级、意图清单、内置计算器目录、各角色职责——**AI 行为边界可审**；
+- 前端「规则公示」面板直观展示，医生/主任无需翻源码即可了解系统边界。
+
+### 运维防护（`ops.py`）
+- 滑动窗口限流：登录端点按 IP 限流（防爆破）、全局 API 按 IP 限流；
+- 登录失败锁定：`LOGIN_FAIL_THRESHOLD` 次失败锁 `LOGIN_LOCK_SECONDS` 秒；
+- 密码策略：`PASSWORD_MIN_LENGTH`（默认 10）；
+- Prometheus 文本指标端点 `/api/metrics`；每个请求带 `X-Trace-Id` 贯穿日志；
+- `BEHIND_PROXY=true`（nginx 后）时才信任 `X-Forwarded-For`，防伪造头绕过限流。
+
+### 数据隔离与 PHI 最小化（多机构）
+- 主任/管理员：全院可见；医生：默认仅见自己数据，配置 `hospital` 后同机构同事互相可见（协作）——患者/会诊/流式接口统一按可见域过滤；
+- 普通医生视角的证件号/手机号脱敏返回（`130****1234`），仅主任/管理员可见完整 PHI（打印报告/医保对接场景）。
+
+### 报告导出与会诊回放
+- `GET /api/consultations/{id}/export` → 打印友好 HTML（Ctrl+P 另存 PDF），沙箱/演示报告带红色警示水印，导出动作写审计日志；
+- `GET /api/consultations/{id}/stream` → SSE 逐事件回放会诊过程（无需重新运行 LLM）；
+- 前端详情页一键「导出 PDF」按钮。
+
+### 运行时数据目录约定
+媒体（OCR/ASR 原文件）与文档（知识库上传）统一存**数据库同目录**的 `media/`、`documents/`（SQLite 即 `backend/data/`；PostgreSQL 用 `./data/`，Docker 落在 `/app/data` 挂载卷内）：既被 `.gitignore` 覆盖，也随数据卷持久化，测试用临时库天然隔离。
 

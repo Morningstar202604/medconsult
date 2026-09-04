@@ -13,11 +13,13 @@ class UserCreate(BaseModel):
     password: str = Field(min_length=6, max_length=128)
     full_name: str = ""
     role: str = "doctor"  # admin|chief|doctor
+    hospital: str = ""    # 所属医疗机构（多机构可见性隔离）
 
 
 class UserUpdate(BaseModel):
     is_active: bool | None = None
     full_name: str | None = None
+    hospital: str | None = None
 
 
 # ---- patient / encounter ----
@@ -56,6 +58,19 @@ class FollowupRequest(BaseModel):
     text: str = Field(min_length=1, max_length=2000)
 
 
+# ---- agent 统一入口 ----
+class AgentRequest(BaseModel):
+    """统一意图入口：一句话 → 自动分流到会诊/问诊/计算/用药/知识/检索。"""
+    text: str = Field(min_length=1, max_length=6000)
+    mode: str = "sandbox"               # 会诊分支的模式
+    specialties: list[str] = Field(default_factory=list)
+    skills: list[int] = Field(default_factory=list)
+    doc_ids: list[int] = Field(default_factory=list)
+    style: str = "brief"
+    rounds: int = Field(default=2, ge=1, le=4)
+    force_intent: str | None = None     # 人工指定意图（跳过识别）
+
+
 # ---- feedback ----
 class FeedbackSubmit(BaseModel):
     consultation_id: int | None = None
@@ -90,6 +105,9 @@ class ReferenceDelete(BaseModel):
 class IntakeStartRequest(BaseModel):
     chief_complaint: str = Field(min_length=1, max_length=300)
     patient_id: int | None = None
+    patient_name: str = ""
+    patient_age: int | None = None
+    patient_gender: str = ""
 class IntakeAnswerRequest(BaseModel):
     answer: str = Field(min_length=1, max_length=2000)
 class IntakeCompleteRequest(BaseModel):

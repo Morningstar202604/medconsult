@@ -18,6 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .. import models
+from ..shared import SPECIALTIES, DEFAULT_SPECIALTIES
 from ..clinical import banner_text, detect_and_run, triage_scan
 from ..clinical.completeness import assess as completeness_assess
 from ..llm import (
@@ -27,22 +28,13 @@ from ..llm import (
 )
 from ..llm.validate import ReportSchema
 from ..rag import search as rag_search
+from ..evidence import search_evidence
 from . import feedback_service, toolbox
 from ..clinical.exam_appropriateness import suggest_exams, summary_text as exam_summary_text
 from ..clinical.drug_interactions import check_interactions, summary_text as drug_summary_text
 from .patient_report import build_patient_report
-
-SPECIALTIES = {
-    "internal":   {"name": "内科专家", "emoji": "🫀"},
-    "surgery":    {"name": "外科专家", "emoji": "🦴"},
-    "pharmacy":   {"name": "药学专家", "emoji": "💊"},
-    "labimaging": {"name": "影像与检验专家", "emoji": "🩻"},
-    "neurology":  {"name": "神经内科专家", "emoji": "🧠"},
-    "cardio":     {"name": "心内科专家", "emoji": "❤️"},
-    "pediatrics": {"name": "儿科专家", "emoji": "🧒"},
-    "obgyn":      {"name": "妇产科专家", "emoji": "🤰"},
-}
-DEFAULT_SPECIALTIES = ["internal", "surgery", "pharmacy", "labimaging"]
+from . import agnes as agnes_fallback
+from ..config import get_settings
 
 
 class ConsultError(Exception):
@@ -52,20 +44,25 @@ class ConsultError(Exception):
 # ---------------------------------------------------------------- 摘要构建
 async def _summarize(production: bool, cfg: LLMConfig, text: str) -> str:
     if not production:
-        # 沙箱：结构化排版，不调用模型
-        return (
-            "【病历摘要（沙箱演示）】\n"
-            "主诉：" + (text[:200] or "（未提供）") + "\n"
-            "说明：此为演示模式，未调用真实模型，仅作流程展示。"
-        )
-    system = role_system(SUMMARIZER_SYSTEM)
-    user = ("请将以下病情描述整理为简洁病历摘要（基本信息/主诉/现病史/既往史/辅助检查，"
-            "缺项写'未见'），300 字内：\n" + text[:1500])
-    try:
-        return "【病历摘要】\n" + await chat(cfg, system, user, max_tokens=600)
-    except Exception:
-        # 摘要失败不阻断：退回结构化排版（非静默降级，事件里会注明）
-        return "【病历摘要（模型整理失败，退回结构化排版）】\n主诉：" + text[:200]
+        return agnes_fallback.sandbox_summarize(text)
+    if cfg.configured:
+        return await _llm_summarize(cfg, text)
+    # Agnes作为LLM后端
+    return agnes_fallback.agnes_summarize(text)
+
+
+async def _llm_summarize(cfg: LLMConfig, text: str) -> str:
+    """生产模式+LLM可用：调用 Summarizer Agent 生成结构化摘要。"""
+    summary = await chat(cfg, SUMMARIZER_SYSTEM, text[:1200], max_tokens=350)
+    if not summary or not summary.strip():
+        return "【病历摘要】（摘要生成失败）"
+    lines = []
+    for line in summary.splitlines():
+        s = line.strip()
+        if s.startswith(("主诉", "现病史", "既往史", "过敏史", "辅助检查")):
+            lines.append(s)
+    joined = "\n".join(lines[:6])
+    return f"【病历摘要】\n{joined}" if joined else summary
 
 
 # ---------------------------------------------------------------- 专科发言
@@ -217,7 +214,7 @@ def compute_disagreements(round1: dict, round2: dict, specs: list[str]) -> dict:
 
 
 # ---------------------------------------------------------------- 证据链收集
-def _add_evidence(db: Session, consultation_id: int, claim: str, basis_type: str,
+def _add_evidence(db: Session, consultation_id: int, claim: str, basis_type: models.EvidenceBasisType,
                   source: str, confidence: str = "中", limitation: str = "") -> None:
     db.add(models.EvidenceItem(
         consultation_id=consultation_id, claim=claim[:2000],
@@ -239,30 +236,7 @@ def _confidence_with_completeness(base: str, completeness: dict) -> tuple[str, l
     return conf, key_missing
 
 
-# ---------------------------------------------------------------- 沙箱演示
-def _sandbox_opinion(spec_key: str, summary: str, round_no: int, others: str = "") -> str:
-    name = SPECIALTIES[spec_key]["name"]
-    if round_no == 1:
-        return (f"【{name}·沙箱演示】基于现有摘要给出方向性意见。"
-                "这是演示脚本输出，未调用真实模型，仅用于展示流程。")
-    return (f"【{name}·第二轮演示】同意第一轮分析；演示模式下不做真实临床判断。")
 
-
-def _sandbox_report(text: str, completeness: dict) -> dict:
-    return {
-        "final_diagnosis": "（沙箱演示，未生成真实诊断）",
-        "confidence": "低",
-        "recommended_dept": "内科门诊",
-        "key_findings": ["沙箱模式未调用真实模型", "仅用于演示会诊流程与界面"],
-        "plan": ["如需真实会诊，请切换生产模式并配置模型"],
-        "red_flags": [],
-        "disagreements": "无",
-        "warnings": "本报告为沙箱演示产物，非真实医疗判断，禁止打印/入病案。",
-        "is_demo": True,
-    }
-
-
-# ---------------------------------------------------------------- 主入口
 async def run_consultation(
     db: Session,
     *,
@@ -276,14 +250,12 @@ async def run_consultation(
     created_by: int,
     rounds: int = 2,
 ) -> models.Consultation:
-    from ..config import get_settings
-
     settings = get_settings()
     production = mode == models.ConsultationMode.PRODUCTION
 
     specs = [s for s in specialties if s in SPECIALTIES] or DEFAULT_SPECIALTIES
 
-    # 生产模式必须配置 LLM
+    # 生产模式：允许Agnes作为LLM后端，无需外部API配置
     if production and not settings.llm_configured:
         raise ConsultError("生产模式需要配置 LLM（API Key + base_url），请在服务端 .env 配置后再发起真实会诊。")
 
@@ -337,12 +309,25 @@ async def run_consultation(
             untrusted_blocks.append("【本院已审核经验（主任审核通过，仅供对照）】\n" + "\n".join(lines))
     except Exception:
         pass
+    # 3b) 实时循证检索（外部源，production 时增强；失败静默降级到内部资料库）
+    lit_res = {"items": [], "count": 0, "provider": ""}
+    if production:
+        try:
+            lit_res = await search_evidence(case_text)
+            if lit_res["items"]:
+                lines = [f"·《{i['title'][:60]}》（{i['source']} {i['date']}，证据等级 {i['level']}）\n"
+                         f"  {i['snippet'][:160]}"
+                         for i in lit_res["items"][:4]]
+                untrusted_blocks.append("【实时循证检索命中（外部证据源，仅供对照）】\n" + "\n".join(lines))
+        except Exception:
+            pass
     untrusted = wrap_untrusted(untrusted_blocks)
 
     # 4) 摘要
     if production:
         sum_cfg = role_config("summarizer")
         summary = await _summarize(True, sum_cfg, case_text)
+        spec_cfg = role_config("specialist")
     else:
         summary = await _summarize(False, LLMConfig(), case_text)
 
@@ -379,7 +364,7 @@ async def run_consultation(
             f"{sev_label.get(f['severity'], '需关注')}：{f['message']}（依据：…{f['matched']}）"
             for f in flags_items)
         for fi in flags_items:
-            _add_evidence(db, consultation.id, fi["message"], "rule",
+            _add_evidence(db, consultation.id, fi["message"], models.EvidenceBasisType.RULE,
                           "危急征象规则库（依据：…" + fi["matched"] + "）", "高",
                           "确定性规则命中，需人工复核临床适用性")
     else:
@@ -392,33 +377,42 @@ async def run_consultation(
                   "；".join(f"{c['name']}（{c['expr']}）= {c['result']}（{c['note']}）" for c in calcs_items))
         for c in calcs_items:
             _add_evidence(db, consultation.id, f"{c['name']}（{c['expr']}）= {c['result']}",
-                          "calculator", "医学计算器（确定性）", "中", c["note"])
+                          models.EvidenceBasisType.CALCULATOR, "医学计算器（确定性）", "中", c["note"])
     if exam_res["items"]:
         add_event("tool", "检查合理性", "🩻", exam_res["summary"])
-        _add_evidence(db, consultation.id, exam_res["summary"], "exam",
+        _add_evidence(db, consultation.id, exam_res["summary"], models.EvidenceBasisType.EXAM,
                       "检查合理性规则引擎（参考通用诊疗指南）", "中", "不适用情形已标注")
     if drug_res["items"]:
         add_event("tool", "药物相互作用", "💊", drug_res["summary"])
-        _add_evidence(db, consultation.id, drug_res["summary"], "drug",
+        _add_evidence(db, consultation.id, drug_res["summary"], models.EvidenceBasisType.DRUG,
                       "内置药物相互作用规则库", "中", "全面评估需接权威药品库")
     if chunks:
         _add_evidence(db, consultation.id,
                       "；".join(f"《{c['doc']}》：{c['text'][:80]}" for c in chunks[:3]),
-                      "rag", "内部资料库检索命中", "中", "片段为资料原文，相关度阈值过滤")
+                      models.EvidenceBasisType.RAG, "内部资料库检索命中", "中", "片段为资料原文，相关度阈值过滤")
+    if lit_res["items"]:
+        top = lit_res["items"][0]
+        _add_evidence(db, consultation.id,
+                      f"《{top['title'][:100]}》——{top['source']} {top['date']}（证据等级 {top['level']}）",
+                      models.EvidenceBasisType.LITERATURE,
+                      f"实时循证检索（{lit_res['provider']}）", "中",
+                      "外部证据源，仅供对照；检索时间与来源见链接")
 
     # 5) 专科第一轮（并发）
     transcript_lines: list[str] = []
     if production:
-        spec_cfg = role_config("specialist")
+        if spec_cfg.configured:
+            async def _r1(spec: str) -> tuple[str, str]:
+                text = await _specialist_opinion(
+                    spec, summary, untrusted, style, skills, spec_cfg, 1)
+                return spec, text
 
-        async def _r1(spec: str) -> tuple[str, str]:
-            text = await _specialist_opinion(
-                spec, summary, untrusted, style, skills, spec_cfg, 1)
-            return spec, text
-
-        round1 = dict(await asyncio.gather(*[_r1(s) for s in specs]))
+            round1 = dict(await asyncio.gather(*[_r1(s) for s in specs]))
+        else:
+            # Agnes作为LLM后端
+            round1 = {s: agnes_fallback.agnes_specialist_opinion(s, summary, case_text, style, 1) for s in specs}
     else:
-        round1 = {s: _sandbox_opinion(s, summary, 1) for s in specs}
+        round1 = {s: agnes_fallback.sandbox_opinion(s, summary, 1) for s in specs}
 
     for spec in specs:
         meta = SPECIALTIES[spec]
@@ -429,16 +423,24 @@ async def run_consultation(
     # 6) 第二轮交叉讨论（并发）
     if rounds >= 2 and len(specs) >= 2:
         if production:
-            async def _r2(spec: str) -> tuple[str, str]:
-                others = "\n".join(
-                    f"{SPECIALTIES[s]['name']}：{round1[s]}" for s in specs if s != spec)
-                text = await _specialist_opinion(
-                    spec, summary, untrusted, style, skills, spec_cfg, 2, others)
-                return spec, text
+            if spec_cfg.configured:
+                async def _r2(spec: str) -> tuple[str, str]:
+                    others = "\n".join(
+                        f"{SPECIALTIES[s]['name']}：{round1[s]}" for s in specs if s != spec)
+                    text = await _specialist_opinion(
+                        spec, summary, untrusted, style, skills, spec_cfg, 2, others)
+                    return spec, text
 
-            round2 = dict(await asyncio.gather(*[_r2(s) for s in specs]))
+                round2 = dict(await asyncio.gather(*[_r2(s) for s in specs]))
+            else:
+                # Agnes作为LLM后端
+                round2 = {}
+                for spec in specs:
+                    others = "\n".join(
+                        f"{SPECIALTIES[s]['name']}：{round1[s]}" for s in specs if s != spec)
+                    round2[spec] = agnes_fallback.agnes_specialist_opinion(spec, summary, case_text, style, 2, others)
         else:
-            round2 = {s: _sandbox_opinion(s, summary, 2) for s in specs}
+            round2 = {s: agnes_fallback.sandbox_opinion(s, summary, 2) for s in specs}
 
         for spec in specs:
             meta = SPECIALTIES[spec]
@@ -450,24 +452,29 @@ async def run_consultation(
     if dispute_res["has_disputes"]:
         for d in dispute_res["disputes"]:
             add_event("dispute", "专科分歧", "⚔️", d["summary"])
-            _add_evidence(db, consultation.id, d["summary"], "specialist",
+            _add_evidence(db, consultation.id, d["summary"], models.EvidenceBasisType.SPECIALIST,
                           "多专科意见交叉比对", "中", "分歧需结合关键检查裁决")
 
     # 7) 主持人共识报告
     if production:
-        mod_cfg = role_config("moderator")
-        transcript = "\n".join(transcript_lines)
-        try:
-            report = await _generate_report(mod_cfg, summary, transcript, skills,
-                                            mode_label="production")
-            report_dict = report.model_dump()
-        except Exception as e:
-            consultation.status = "failed"
-            consultation.error_msg = str(e)[:2000]
-            db.commit()
-            raise ConsultError(f"报告生成失败：{e}")
+        if spec_cfg.configured:
+            mod_cfg = role_config("moderator")
+            transcript = "\n".join(transcript_lines)
+            try:
+                report = await _generate_report(mod_cfg, summary, transcript, skills,
+                                                mode_label="production")
+                report_dict = report.model_dump()
+            except Exception as e:
+                consultation.status = models.ConsultationStatus.FAILED
+                consultation.error_msg = str(e)[:2000]
+                db.commit()
+                raise ConsultError(f"报告生成失败：{e}")
+        else:
+            # Agnes作为主持人
+            transcript = "\n".join(transcript_lines)
+            report_dict = agnes_fallback.agnes_report(summary, transcript, case_text, completeness, flags_items, calcs_items)
     else:
-        report_dict = _sandbox_report(case_text, completeness)
+        report_dict = agnes_fallback.sandbox_report(case_text, completeness)
         consultation.is_demo = True
 
     # 8) 组装报告（附加确定性结果 + 证据链增强）
@@ -481,10 +488,11 @@ async def run_consultation(
         report_dict["red_flags"] = [i["message"] for i in flags_items] + list(
             report_dict.get("red_flags") or [])
     # 缺关键信息 → 置信度降级 + 补查建议
-    base_conf = report_dict.get("confidence", "中")
-    report_dict["confidence"], key_missing = _confidence_with_completeness(base_conf, completeness)
+    conf = report_dict.get("confidence", "中")
+    report_dict["confidence"], key_missing = _confidence_with_completeness(conf, completeness)
     if key_missing:
-        report_dict["warnings"] = (report_dict.get("warnings") or "") +             f"；当前缺少{'、'.join(key_missing)}，结论置信度已相应下调。"
+        report_dict["warnings"] = (report_dict.get("warnings") or "") + \
+            f"；当前缺少{'、'.join(key_missing)}，结论置信度已相应下调。"
     if exam_res["items"]:
         report_dict["exam_suggestions"] = exam_res["summary"]
     if drug_res["items"]:
@@ -499,11 +507,11 @@ async def run_consultation(
     if report_dict.get("final_diagnosis"):
         _add_evidence(db, consultation.id,
                       "最终诊断：" + report_dict["final_diagnosis"],
-                      "moderator", "主持人 Agent 共识报告", report_dict.get("confidence", "中"),
+                      models.EvidenceBasisType.MODERATOR, "主持人 Agent 共识报告", conf,
                       "基于专科意见与检索资料综合；置信度受资料完备度影响")
     for f in (report_dict.get("key_findings") or [])[:5]:
-        _add_evidence(db, consultation.id, str(f), "moderator",
-                      "主持人 Agent 共识报告·主要依据", report_dict.get("confidence", "中"), "")
+        _add_evidence(db, consultation.id, str(f), models.EvidenceBasisType.MODERATOR,
+                      "主持人 Agent 共识报告·主要依据", conf, "")
     # 患者版报告（双视角）
     try:
         pr = build_patient_report(report_dict, completeness)
@@ -512,7 +520,7 @@ async def run_consultation(
         pass
 
     consultation.set_report(report_dict)
-    consultation.status = "completed"
+    consultation.status = models.ConsultationStatus.COMPLETED
     add_event("report", "主持人 Agent", "⚖️", json.dumps(report_dict, ensure_ascii=False)[:4000])
     db.commit()
     db.refresh(consultation)

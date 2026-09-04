@@ -2,7 +2,7 @@ import { useState } from "react";
 import { api, ApiError, Me } from "../api";
 
 export default function Login({ onLogin }: { onLogin: (token: string, user: Me) => void }) {
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,7 +27,7 @@ export default function Login({ onLogin }: { onLogin: (token: string, user: Me) 
   return (
     <div className="login-wrap">
       <form className="login-card" onSubmit={submit}>
-        <h1>MedConsult Pro · 汇诊</h1>
+        <h1>汇诊</h1>
         <p>医院多学科 AI 会诊平台 · 请使用院内账号登录</p>
         <label>用户名</label>
         <input type="text" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />

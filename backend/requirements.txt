@@ -12,3 +12,5 @@ pypdf>=4.2
 python-docx>=1.1
 python-multipart>=0.0.9
 pytest>=8.2
+# 企业生产部署：PostgreSQL 驱动（可与 SQLite 并存，切换 DATABASE_URL 即可）
+psycopg[binary]>=3.2

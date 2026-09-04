@@ -17,7 +17,8 @@ def list_users(db: DbDep, user: CurrentUser):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "仅管理员可查看用户")
     rows = db.scalars(select(models.User).order_by(models.User.id)).all()
     return {"items": [{"id": u.id, "username": u.username, "full_name": u.full_name,
-                       "role": u.role.value, "is_active": u.is_active,
+                       "role": u.role.value, "hospital": u.hospital,
+                       "is_active": u.is_active,
                        "created_at": u.created_at.isoformat() if u.created_at else None}
                       for u in rows]}
 
@@ -47,6 +48,8 @@ def update_user(uid: int, body: UserUpdate, db: DbDep, user: CurrentUser):
         target.is_active = body.is_active
     if body.full_name is not None:
         target.full_name = body.full_name
+    if body.hospital is not None:
+        target.hospital = body.hospital.strip()
     db.commit()
     return {"ok": True}
 
