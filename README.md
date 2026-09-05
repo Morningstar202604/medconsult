@@ -1,4 +1,6 @@
-<p align="center"><img src="docs/logo.svg" alt="MedConsult Logo" width="200" height="60" /></p>`n`n# 汇诊
+<p align="center"><img src="docs/logo.svg" alt="MedConsult Logo" width="200" height="60" /></p>
+
+# 汇诊
 
 生产级医院多学科 AI 会诊（MDT）平台。基于开源项目 [Morningstar202604/medconsult](https://github.com/Morningstar202604/medconsult) 的深度审查后重构：**消灭了原版全部致命问题**，从"零框架 Demo"升级为**可部署、可审计、可进病案流程**的临床工作站系统。
 
