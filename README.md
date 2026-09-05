@@ -2,13 +2,13 @@
 
 # 汇诊
 
-生产级医院多学科 AI 会诊（MDT）平台。基于开源项目 [Morningstar202604/medconsult](https://github.com/Morningstar202604/medconsult) 的深度审查后重构：**消灭了原版全部致命问题**，从"零框架 Demo"升级为**可部署、可审计、可进病案流程**的临床工作站系统。
+生产级医院多学科 AI 会诊（MDT）平台。基于开源项目 [Morningstar202604/medconsult](https://github.com/Morningstar202604/medconsult) 的深度审查后重构，修复了原版的主要缺陷，从"零框架 Demo"升级为**可部署、可审计、可进病案流程**的临床工作站系统。
 
 > ⚠️ 医疗免责声明：本系统输出的会诊意见仅供临床参考，不构成诊断或处方。生产模式下报告均带"未经验证"标注，沙箱演示报告禁止打印/入病案。
 
 ---
 
-## 一、为什么重构（原版致命问题 → 本版修复）
+## 一、为什么重构
 
 | 原版致命问题 | 后果 | 本版修复 |
 |---|---|---|
@@ -145,7 +145,7 @@ medconsult/
 └── docker-compose.yml
 ```
 
-## 垂直临床 Agent 差异化能力（v2）
+## 垂直临床 Agent 差异化能力
 
 汇诊不是"通用 Agent 换皮"，从对话到工具到印证共三层差异化，全部可审计、可回放：
 
@@ -179,7 +179,7 @@ medconsult/
 - 循证检索：`EVIDENCE_PROVIDER` 配置真实循证源；未配置时用内部 RAG 兜底；
 - 沙箱模式无需 LLM，报告强制 `is_demo`（禁止打印入病案）。
 
-## 九、企业交付硬化（v1.0）
+## 九、企业交付硬化
 
 面向企业/医院交付的运维与合规能力，全部开箱即用：
 
@@ -209,4 +209,10 @@ medconsult/
 
 ### 运行时数据目录约定
 媒体（OCR/ASR 原文件）与文档（知识库上传）统一存**数据库同目录**的 `media/`、`documents/`（SQLite 即 `backend/data/`；PostgreSQL 用 `./data/`，Docker 落在 `/app/data` 挂载卷内）：既被 `.gitignore` 覆盖，也随数据卷持久化，测试用临时库天然隔离。
+
+---
+
+## 十、许可证
+
+本项目采用 [MIT License](LICENSE) 开源。命名与工程化实现基于上游开源项目 [AgentClinic](https://github.com/samuelschmidgall/AgentClinic)，其研究成果基线及版权归属说明见 [NOTICE](NOTICE)。
 
